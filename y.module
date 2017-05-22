@@ -1,0 +1,169 @@
+<?php
+
+function y__info( $owner = NULL, $protocol ) {
+  $yinfo = &drupal_static(__FUNCTION__, array());
+  $ret = array();
+  $modules = $owner ? array($owner) : module_implements('y');
+
+  foreach( $modules as $module ) {
+    if( !isset($yinfo[$module][$protocol]) ) {
+      // read from cache
+    }
+    if( isset($yinfo[$module][$protocol]) ) {
+      $ret[] = $yinfo[$module][$protocol];
+      continue;
+    }
+    
+    $confinfo = array(  'path' => drupal_get_path('module', $module) . '/config/',
+                        'callbacks' => NULL );
+    if( $cfgarray = module_invoke($module, 'y') ) {
+      $confinfo = array_merge($confinfo, $cfgarray);
+    }
+
+    // $module.yml files overrides anything else
+    if( !isset($yinfo[$module]) ) {
+      if( $confinfo['callbacks'] ) {
+        $path = $confinfo['callbacks']['path'] ?? $confinfo['path'];
+        if( file_exists($filename = $path . 'callbacks.php') ) {
+          require_once $filename;
+        }
+      }
+      $callbacks = $confinfo['callbacks']['tag_callbacks'] ?? NULL;
+      $yinfo[$module] = file_exists($filename = $confinfo['path'] . $module . '.yaml')
+        ? yaml_parse_file($filename, 0, $callbacks)
+        : array();
+    }
+
+    if( !isset($ymlinfo[$module][$protocol]) ) {
+      if( isset($confinfo[$protocol]['callbacks']['tag_callbacks']) ) {
+        $path = $confinfo[$protocol]['callbacks']['path'] ?? $confinfo['path'];
+        if( file_exists($filename = $path . $protocol . '.callbacks.php') ||
+            file_exists($filename = $path . $protocol . '/callbacks.php')) {
+          require_once $filename;
+        }
+        $callbacks = $confinfo['callbacks']['tag_callbacks'];
+      } else {
+        $callbacks = NULL;
+      }
+      $yinfo[$module][$protocol] = file_exists($filename = $confinfo['path'] . $protocol . '.yaml')
+        ? yaml_parse_file($filename, 0, $callbacks)
+        : array();
+
+      foreach( file_scan_directory($confinfo['path'] . $protocol, '|.*\.y.ml|') as $file ) {
+        $yinfo[$module][$protocol] = array_merge( $yinfo[$module][$protocol], yaml_parse_file($file->uri, 0, $callbacks) );
+      }
+    }
+    $ret[] = $yinfo[$module][$protocol];
+  }
+  return $owner ? ($ret[0] ?? array()) : $ret;
+}
+
+/**
+ * Build a configuration array from YAML
+ * @param $module // calling module / module with the configuration files
+ * @param $protocol // defined protocol getting parsed
+ * @param $api // api to search for array of key-pairs (api2searchfor => array2searchin)
+ * @param $common // array of common fields
+ * @return array
+ * 
+ * Example:
+ *   y__build_config( 'bc', 'entity', 'schema', array( 'properties' => 'fields' ), 'description' )
+ *   parses the "entity" configuration found in the "bc" module.
+ *   uses the 'schema' element for information with the expectation that this is something expected by schema or hook_schema
+ *   searches the array called 'properties' for elements and moves the schema parts of each element to a target sub-array called 'fields
+ *   When it finds a field called 'description', that gets transferred to its child target if the child target doesn't have its own description
+ */
+function y__build_config( $module, $protocol, $api, $source_target=array('properties' => NULL), &$mergetarget=null, $common=array('description', 'label') ) {
+  if( !is_array($common) ) {
+    $common = array( $common );
+  }
+  $ret = array();
+  $target = reset($source_target);
+  foreach( y__info($module, $protocol) as $name => $info ) {
+    $ret[$name] = array();
+
+    if( $target ) {
+      foreach ($common as $label) {
+        if (isset($info[$label])) {
+          $ret[$name][$label] = $info[$label];
+        }
+      }
+    }
+    if( isset($info[$api]) ) {
+      $ret[$name] = array_merge($ret[$name], $info[$api] );
+    }
+    foreach( $source_target as $source => $target ) {
+      if( $target && !isset($ret[$name][$target]) ) {
+        $ret[$name][$target] = array();
+      }
+      if( $target ) {
+        $targetarray = & $ret[$name][$target];
+      } else {
+        $targetarray = & $ret[$name];
+      }
+      
+      foreach ($info[$source] as $p_name => $p_info) {
+        if (isset($p_info[$api])) {
+          if( !isset($targetarray[$p_name]) ) {
+            $targetarray[$p_name] = array();
+          }
+          foreach( $common as $label ) {
+            if (isset($p_info[$label])) {
+              $targetarray[$p_name][$label] = $p_info[$label];
+            }
+          }
+          
+          $targetarray[$p_name] = array_merge($targetarray[$p_name], $p_info[$api]);
+        }
+      }
+      if( !empty($info[$api]) ) {
+        $ret[$name] += $info[$api];
+      }
+    }
+    if( !$ret[$name] ) {
+      unset( $ret[$name] );
+    }
+  }
+  return $ret;
+}
+
+/**
+ * Implements hook_hook_info().
+ */
+function y_hook_info() {
+  return( array('y' => 'y') );
+}
+
+/**
+ * Invokes a hook in a particular module.
+ *
+ * All arguments are passed by value. Use drupal_alter() if you need to pass
+ * arguments by reference.
+ *
+ * @param $module
+ *   The name of the module (without the .module extension).
+ * @param $hook
+ *   The name of the hook to invoke.
+ * @param ...
+ *   Arguments to pass to the hook implementation.
+ *
+ * @return
+ *   The return value of the hook implementation.
+ *
+ * @see drupal_alter()
+function yml__invoke($module, $hook) {
+  $args = func_get_args();
+  // Remove $module and $hook from the arguments.
+  unset($args[0], $args[1]);
+  if (module_hook($module, $hook)) {
+    return call_user_func_array($module . '_' . $hook, $args);
+  }
+}
+*/
+
+
+// function yml__self( $function_name ) {
+  //
+// }
+
+// function yml__invoke_all

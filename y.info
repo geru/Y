@@ -1,0 +1,4 @@
+name = YML Configuration
+description = Configure Drupal through YML / YAML files
+package = Enterprise
+core = 7.x
