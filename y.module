@@ -1,61 +1,186 @@
 <?php
 
-function y__info( $owner = NULL, $protocol ) {
-  $yinfo = &drupal_static(__FUNCTION__, array());
+/**
+ * Flatten an array to one-dimensional with keys imploded with delimiter
+ * @param array $array   // array to be flattened
+ * @param string $prefix // current prefix for key
+ * @param string $delim  // glue delimiter for key
+ * @param null $ret      // array to put result in
+ * @return array|null    // returns current level of array
+ */
+function y__array_flatten( array $array, $prefix='', $delim = ':', &$ret=NULL ) {
+  if( !$ret ) {
+    $ret = array();
+  }
+  foreach( $array as $key => $value ){
+    if( is_array($value) ) {
+      y__array_flatten( $value, $prefix . $delim . $key, $delim, $ret );
+    } else {
+      $ret[ $prefix . $key ] = $value;
+    }
+  }
+  return( $ret );
+}
+
+/**
+ * Unflatten 1D array into multi-dimensional
+ * @param $prefix
+ * @param $array / one-dimensional
+ * @param string $glue
+ */
+function y__array_unflatten( array $array, $delim = ':') {
   $ret = array();
-  $modules = $owner ? array($owner) : module_implements('y');
+  foreach($array as $key => $value) {
+    $workret = &$ret;
+    $deepkeys = explode( $key, $delim );
+    $finalkey = array_shift($deepkeys);
+    foreach( $deepkeys as $curkey ) {
+      $workret[$finalkey] = array();
+      $workret = &$workret[$finalkey];
+      $finalkey = $curkey;
+    }
+    $workret[$finalkey] = $value;
+  }
+  return $ret;
+}
+
+/**
+ * YAML parse callback general function call
+ * @return mixed|null
+ */
+function y__yaml_callback_call_user_func_array( $value, $tag, $flags ) {
+  if( is_array($value) ) {
+    $function = array_shift($value);
+  } else {
+    $function =  $value;
+    $value = array();
+  }
+  return function_exists($function) ? call_user_func_array($function, $value) : NULL;
+}
+
+/**
+ * YAML parse callback general function call
+ * @return mixed|null
+ */
+function y__yaml_callback_t( $value, $tag, $flags ) {
+  return t($value);
+}
+
+/**
+ * Fetch all of the information defined by the owning module according to the protocol
+ * @param null $owner
+ * @param $protocol
+ * @return array of protocol information keyed by module implementing protocol
+ *
+ * todo: add callback indexing and caching
+ */
+function y__info( $owner = NULL, $protocol, $format='tree' ) {
+  $modulesimplement = &drupal_static(__FUNCTION__ . ':modulesimplement', array());
+  // An array keyed by protocol of the modules implementing the protocol
+  // Eg. $modulesimplement['hook'] = array( 'bc', 'bcfeeds' )
+
+  $protocolsimplemented = &drupal_static(__FUNCTION__ . ':protocolsimplemented', array());
+  // An array keyed by modulename of the protocols implemented by the module
+  // Eg. $protocolsimplemented['bc'] = array( 'hook', 'entity', 'bctype' );
+
+  $yinfo = &drupal_static(__FUNCTION__, array());
+  // A multi-dim array of the modules implementing protocols keyed by protocol and module
+  // Eg. $yinfo[$protocol][$module] = array(... )
+
+  // Initialize self
+  if( !isset($modulesimplement[$protocol]) ) {
+    // any time a new protocol is requested, something has changed, clear information and reload
+    $modulesimplement = array();
+    $modulesimplement[$protocol] = array();
+    $protocolsimplemented = array();
+    $yinfo = array();
+    $modules = module_implements( 'y' );
+    foreach( $modules as $module ) {
+      $protocolsimplemented[$module] = module_invoke($module, 'y');
+      foreach( $protocolsimplemented[$module] as $p ){
+        if( !isset($modulesimplement[$p])) {
+          $modulesimplement[$p] = array();
+        }
+        $modulesimplement[$p][] = $module;
+        if( !isset($yinfo[$p]) ) {
+          $yinfo[$p] = array();
+        }
+      }
+    }
+  }
+
+  $modules = $owner
+    ? array($owner)
+    : $modulesimplement[$protocol] ?? array();
+  if( !$modules ) {
+    return( array() );
+  }
+  if( $owner && isset($yinfo[$protocol][$owner]) ) {
+    return $format ? $yinfo[$protocol][$owner][$format] : $yinfo[$protocol][$owner];
+  }
 
   foreach( $modules as $module ) {
-    if( !isset($yinfo[$module][$protocol]) ) {
-      // read from cache
-    }
-    if( isset($yinfo[$module][$protocol]) ) {
-      $ret[] = $yinfo[$module][$protocol];
-      continue;
-    }
-    
-    $confinfo = array(  'path' => drupal_get_path('module', $module) . '/config/',
-                        'callbacks' => NULL );
-    if( $cfgarray = module_invoke($module, 'y') ) {
-      $confinfo = array_merge($confinfo, $cfgarray);
-    }
-
-    // $module.yml files overrides anything else
-    if( !isset($yinfo[$module]) ) {
-      if( $confinfo['callbacks'] ) {
-        $path = $confinfo['callbacks']['path'] ?? $confinfo['path'];
-        if( file_exists($filename = $path . 'callbacks.php') ) {
-          require_once $filename;
+    $callbacks = array(
+      '!t' => 'y__yaml_callback_t',
+      '!call' => 'y__yaml_callback_call_user_func_array' );
+    // get config path for the module
+    if( !isset($yinfo['_config'][$module] ) ) {
+      $modulepath = drupal_get_path('module', $module) . '/';
+      foreach( array($modulepath => $module . '.yaml', $modulepath . 'config/' => '_config.yaml') as $path => $filename ) {
+        if (file_exists($path . $filename) ) {
+          // todo: find callbacks yaml and callbacks PHP if they will be found
+          if((($_config = yaml_parse($path . $filename, 0, $n, $callbacks)) !== FALSE)) {
+            if (!isset($_config['path'])) {
+              $_config['path'] = $path;
+              $_config['filename'] = $filename;
+            }
+            break;
+          }
         }
       }
-      $callbacks = $confinfo['callbacks']['tag_callbacks'] ?? NULL;
-      $yinfo[$module] = file_exists($filename = $confinfo['path'] . $module . '.yaml')
-        ? yaml_parse_file($filename, 0, $callbacks)
-        : array();
+      $yinfo['_config'][$module] = $_config ?? array('path' => $modulepath . 'config/');
     }
+    if (!isset($yinfo[$protocol][$module]) ) {
+      $conf = $yinfo['_config'][$module];
+      $initarray = isset($yinfo['_config'][$module][$protocol]) ? $yinfo['_config'][$module][$protocol] : array();
+      $filename = $conf['path'] . $protocol . '.yaml';
+      // todo: find callbacks yaml and callbacks PHP if they will be found
+      $protocolinfo = file_exists($filename)
+        ? (($info = yaml_parse_file($filename, 0, $n, $callbacks)) !== FALSE ? $info : $initarray)
+        : $initarray;
+      $yinfo[$protocol][$module] = $protocolinfo
+        ? array( 'tree' => $protocolinfo,
+                 'flat' => y__array_flatten($protocolinfo) )
+        : array( 'tree' => array(), 'flat' => array() );
 
-    if( !isset($ymlinfo[$module][$protocol]) ) {
-      if( isset($confinfo[$protocol]['callbacks']['tag_callbacks']) ) {
-        $path = $confinfo[$protocol]['callbacks']['path'] ?? $confinfo['path'];
-        if( file_exists($filename = $path . $protocol . '.callbacks.php') ||
-            file_exists($filename = $path . $protocol . '/callbacks.php')) {
-          require_once $filename;
+      foreach (file_scan_directory($conf['path'] . $protocol, '|.*\.y.?ml|') as $file) {
+        if (($info = yaml_parse_file($file->uri, 0, $n, $callbacks)) !== FALSE) {
+          $yinfo[$protocol][$module] = array(
+            'tree' => array_merge($yinfo[$protocol][$module]['tree'], $info ),
+            'flat' => array_merge($yinfo[$protocol][$module]['flat'], y__array_flatten($info) ) );
         }
-        $callbacks = $confinfo['callbacks']['tag_callbacks'];
-      } else {
-        $callbacks = NULL;
-      }
-      $yinfo[$module][$protocol] = file_exists($filename = $confinfo['path'] . $protocol . '.yaml')
-        ? yaml_parse_file($filename, 0, $callbacks)
-        : array();
-
-      foreach( file_scan_directory($confinfo['path'] . $protocol, '|.*\.y.ml|') as $file ) {
-        $yinfo[$module][$protocol] = array_merge( $yinfo[$module][$protocol], yaml_parse_file($file->uri, 0, $callbacks) );
       }
     }
-    $ret[] = $yinfo[$module][$protocol];
   }
-  return $owner ? ($ret[0] ?? array()) : $ret;
+  return $owner ? (isset($yinfo[$protocol][$owner][$format]) ? $yinfo[$protocol][$owner][$format] : array()) : $yinfo[$protocol];
+}
+
+/**
+ * Main y controller router
+ * @param $protocol
+ * @param ... more parameters
+ * @return array of protocol information supplied by controller
+ */
+function y__protocol() {
+  $args = func_get_args();
+  if( count($args) ) {
+    $protocol = array_shift( $args );
+    if( $protocolcontroller = 'y__protocol_' . $protocol ) {
+      if( function_exists($protocolcontroller) ) {
+        return call_user_func_array($protocolcontroller, $args);
+      }
+    }
+  }
 }
 
 /**
@@ -66,21 +191,35 @@ function y__info( $owner = NULL, $protocol ) {
  * @param $common // array of common fields
  * @return array
  * 
- * Example:
+ * Example 1: build a schema using the 'entity' protocol
  *   y__build_config( 'bc', 'entity', 'schema', array( 'properties' => 'fields' ), 'description' )
- *   parses the "entity" configuration found in the "bc" module.
- *   uses the 'schema' element for information with the expectation that this is something expected by schema or hook_schema
- *   searches the array called 'properties' for elements and moves the schema parts of each element to a target sub-array called 'fields
- *   When it finds a field called 'description', that gets transferred to its child target if the child target doesn't have its own description
+ * parses the "entity" protocol found in the "bc" module configuration.
+ * uses the 'schema' element for information with the expectation that this is something expected by schema or hook_schema
+ * searches the array called 'properties' for elements and moves the schema parts of each element to a target sub-array called 'fields
+ * When it finds a field called 'description', that gets transferred to its child target if the child target doesn't have its own description
+ * 
+ * Example 2: build a bundle definition using the 'bctype' protocol
+ *   y__build_config('bc', 'bctype', 'bundle', array('bundle'))
+ * parses the 'bctype' protocol found in the configuration.
+ * looks for the 'bundle' information
+ * adds common 'description' and 'label' fields from bctype definition 
+ * 
  */
-function y__build_config( $module, $protocol, $api, $source_target=array('properties' => NULL), &$mergetarget=null, $common=array('description', 'label') ) {
+function y__build_config( $module, $protocol, $api, $source_target=array('properties' => null), &$mergetarget=null, $common=array('description', 'label') ) {
   if( !is_array($common) ) {
     $common = array( $common );
   }
-  $ret = array();
+  if( $mergetarget ) {
+    $ret = & $mergetarget;
+  } else {
+    $ret = array();
+  }
+  
   $target = reset($source_target);
   foreach( y__info($module, $protocol) as $name => $info ) {
-    $ret[$name] = array();
+    if( !isset($ret[$name]) || !is_array($ret[$name]) ) {
+      $ret[$name] = array();
+    }
 
     if( $target ) {
       foreach ($common as $label) {
@@ -93,31 +232,36 @@ function y__build_config( $module, $protocol, $api, $source_target=array('proper
       $ret[$name] = array_merge($ret[$name], $info[$api] );
     }
     foreach( $source_target as $source => $target ) {
-      if( $target && !isset($ret[$name][$target]) ) {
-        $ret[$name][$target] = array();
-      }
-      if( $target ) {
-        $targetarray = & $ret[$name][$target];
-      } else {
-        $targetarray = & $ret[$name];
-      }
-      
-      foreach ($info[$source] as $p_name => $p_info) {
-        if (isset($p_info[$api])) {
-          if( !isset($targetarray[$p_name]) ) {
-            $targetarray[$p_name] = array();
-          }
-          foreach( $common as $label ) {
-            if (isset($p_info[$label])) {
-              $targetarray[$p_name][$label] = $p_info[$label];
+      if( $source ) { // execute if associative array
+        if ($target && !isset($ret[$name][$target])) {
+          $ret[$name][$target] = array();
+        }
+        if ($target) {
+          $targetarray = &$ret[$name][$target];
+        }
+        else {
+          $targetarray = &$ret[$name];
+        }
+
+        if( isset($info[$source])) {
+          foreach ($info[$source] as $p_name => $p_info) {
+            if (isset($p_info[$api])) {
+              if (!isset($targetarray[$p_name])) {
+                $targetarray[$p_name] = array();
+              }
+              foreach ($common as $label) {
+                if (isset($p_info[$label])) {
+                  $targetarray[$p_name][$label] = $p_info[$label];
+                }
+              }
+
+              $targetarray[$p_name] = array_merge($targetarray[$p_name], $p_info[$api]);
             }
           }
-          
-          $targetarray[$p_name] = array_merge($targetarray[$p_name], $p_info[$api]);
         }
-      }
-      if( !empty($info[$api]) ) {
-        $ret[$name] += $info[$api];
+        if (!empty($info[$api])) {
+          $ret[$name] += $info[$api];
+        }
       }
     }
     if( !$ret[$name] ) {
@@ -127,43 +271,264 @@ function y__build_config( $module, $protocol, $api, $source_target=array('proper
   return $ret;
 }
 
-/**
- * Implements hook_hook_info().
- */
-function y_hook_info() {
-  return( array('y' => 'y') );
-}
-
-/**
- * Invokes a hook in a particular module.
- *
- * All arguments are passed by value. Use drupal_alter() if you need to pass
- * arguments by reference.
- *
- * @param $module
- *   The name of the module (without the .module extension).
- * @param $hook
- *   The name of the hook to invoke.
- * @param ...
- *   Arguments to pass to the hook implementation.
- *
- * @return
- *   The return value of the hook implementation.
- *
- * @see drupal_alter()
-function yml__invoke($module, $hook) {
-  $args = func_get_args();
-  // Remove $module and $hook from the arguments.
-  unset($args[0], $args[1]);
-  if (module_hook($module, $hook)) {
-    return call_user_func_array($module . '_' . $hook, $args);
+/*  
+function y__expand( $module, $protocol ) {
+  y__info( $module, $protocol );
+  $yinfo = &drupal_static('y__info'); // it is defined at this point
+  if( $specialfunc = preg_grep('^@',$yinfo[$module][$protocol]['flat']) ) {
+    
+  
+    foreach( $specialkeys as $specialkey ) {
+      
+    }
   }
 }
-*/
+
+function y__build_pattern( $module, $protocol, $patterns, &$mergetarget=NULL ) {
+  if( $mergetarget ) {
+    $ret = & $mergetarget;
+  } else {
+    $ret = array();
+  }
+
+  $yinfo = y__info( $module, $protocol );
+
+  foreach(  as $name => $info ) {
 
 
-// function yml__self( $function_name ) {
-  //
-// }
+  }
+  return $ret;
+}
+*
 
-// function yml__invoke_all
+/**
+ * Implements protocol 'field'
+ * Returns values defined by the y field protocol
+ */
+function y__protocol_field($module, $api, $name=NULL, $definingmodule=NULL) {
+  switch( $api ) {
+    default:
+      $mod = $definingmodule ?? $module;
+      $yinfo = y__info($mod, 'field' );
+      $ret = $yinfo[$mod]['definition'][$api];
+      return $ret;
+  }
+}
+
+/**
+ * Implements protocol 'bundle'
+ */
+function y__protocol_bundle($module, $api, $name=NULL, $definingmodule, $entity=NULL) {
+  switch( $api ) {
+    default:
+      $yinfo = y__info($definingmodule ?? $module, 'field' );
+      return $yinfo['definition'][$api];
+  }
+}
+
+/**
+ * Implements protocol 'entity'
+ * Returns values defined by the y entity protocol
+ */
+function y__protocol_entity($module, $api, &$info = NULL) {
+  switch( $api ) {
+    case 'schema':              return y__build_config($module, 'entity', 'schema', array('properties' => 'fields'));
+    case 'info':                return y__build_config($module, 'entity', 'info');
+    case 'property info alter': return y__build_config($module, 'entity', 'property info alter', array( 'properties' => null ), $info );
+  }
+}
+
+/**
+ * Implements protocol 'hook' 
+ * Returns values defined by modules implementing the y hook protocol
+ */
+function y__protocol_hook( $hookname ) {
+  static $firsttime = TRUE;
+  $hookaggregate = &drupal_static(__FUNCTION__, array());
+  // $hookaggregate is an array of the hooks defined keyed by hookname
+
+  if( $firsttime && ($hookmodules = y__info(NULL, 'hook')) ) {
+    foreach ($hookmodules as $module => $drupalhooks) {
+      foreach ($drupalhooks as $hook => $hookinfo) {
+        $hookaggregate[$hook] = isset($hookaggregate[$hook]) ? array_merge($hookaggregate[$hook], $hookinfo) : $hookinfo;
+      }
+    }
+    $firsttime = FALSE;
+  }
+  return $hookname ? ($hookaggregate[$hookname] ?? array()) : array_keys($hookaggregate);
+}
+
+
+/**
+ * Attempts to directly activate a field that was disabled due to its module
+ * being disabled.
+ *
+ * The normal API function for updating fields, field_update_field(), will not
+ * work on disabled fields. As a workaround, this function directly updates the
+ * database, but it is up to the caller to clear the cache.
+ *
+ *  This is mirror of commerce.module equivalent
+ *
+ * @param $field_name
+ *   The name of the field to activate.
+ *
+ * @return
+ *   Boolean indicating whether or not the field was activated.
+ */
+function y__field_activate($field_name) {
+  // Set it to active via a query because field_update_field() does
+  // not work on inactive fields.
+  $updated = db_update('field_config')
+    ->fields(array('active' => 1))
+    ->condition('field_name', $field_name, '=')
+    ->condition('deleted', 0, '=')
+    ->execute();
+
+  return !empty($updated) ? TRUE : FALSE;
+}
+
+/**
+ * Enables and deletes fields of the specified type.
+ *
+ *  This is mirror of commerce.module equivalent
+ *
+ * @param $type
+ *   The type of fields to enable and delete.
+ */
+function y__field_delete_multiple($type, $bundle = NULL) {
+  $fields_to_delete = array( 'type' => $type );
+  if( $bundle ) {
+    $fields_to_delete['bundle'] = $bundle;
+  }
+  // Read the fields for any active or inactive field of the specified type.
+  foreach (field_read_fields($fields_to_delete, array('include_inactive' => TRUE)) as $field_name => $field) {
+    y__field_delete($field_name);
+  }
+}
+
+/**
+ * Enables and deletes the specified field.
+ *
+ * The normal API function for deleting fields, field_delete_field(), will not
+ * work on disabled fields. As a workaround, this function first activates the
+ * fields of the specified type and then deletes them.
+ *
+ * This is mirror of commerce.module equivalent
+ *
+ * @param $field_name
+ *   The name of the field to enable and delete.
+ */
+function y__field_delete($field_name) {
+  // In case the field is inactive, first activate it and clear the field cache.
+  if (y__field_activate($field_name)) {
+    field_cache_clear();
+  }
+
+  // Delete the field.
+  field_delete_field($field_name);
+}
+
+/**
+ * Sets property info of fields.
+ *
+ * @see hook_field_info(),
+ * @see entity_metadata_field_entity_property_info()
+ * @see entity_field_info_alter()
+ * @see https://www.drupal.org/docs/7/api/entity-api/property-info-for-fields
+ */
+function y__field_property_info_callback(&$info, $entity_type, $field, $instance, $field_type) {
+  $name = $field['field_name'];
+  $property = &$info[$entity_type]['bundles'][$instance['bundle']]['properties'][$name];
+  $property = y__protocol_field($field->type, 'property_info');
+  if( $field['cardinality'] !=  1 ) {
+    $property['type'] = 'list<' . $property['type'] . '>';
+  }
+
+  unset($property['query callback']);
+}
+
+/**
+ * Deletes any field instance attached to entities of the specified type,
+ * regardless of whether or not the field is active.
+ *
+ * This is mirror of commerce.module equivalent
+ *
+ * @param $entity_type
+ *   The type of entity whose fields should be deleted.
+ * @param $bundle
+ *   Optionally limit instance deletion to a specific bundle of the specified
+ *   entity type.
+ */
+function y__instance_delete_multiple($entity_type, $bundle = NULL) {
+  // Prepare a parameters array to load the specified instances.
+  $params = array(
+    'entity_type' => $entity_type,
+  );
+
+  if (!empty($bundle)) {
+    $params['bundle'] = $bundle;
+    // Delete this bundle's field bundle settings.
+    variable_del('field_bundle_settings_' . $entity_type . '__' . $bundle);
+  }
+  else {
+    // Delete all field bundle settings for this entity type.
+    db_delete('variable')
+      ->condition('name', db_like('field_bundle_settings_' . $entity_type . '__') . '%', 'LIKE')
+      ->execute();
+  }
+
+  // Read and delete the matching field instances.
+  foreach (field_read_instances($params, array('include_inactive' => TRUE)) as $instance) {
+    y__instance_delete($instance);
+  }
+}
+
+/**
+ * Deletes the specified instance and handles field cleanup manually in case the
+ * instance is of a disabled field.
+ *
+ * This is mirror of commerce.module equivalent
+ *
+ * @param $instance
+ *   The field instance info array to be deleted.
+ */
+function y__instance_delete($instance) {
+  // First activate the instance's field if necessary.
+  $field_name = $instance['field_name'];
+  $activated = y__field_activate($field_name);
+
+  // Clear the field cache if we just activated the field.
+  if ($activated) {
+    field_cache_clear();
+  }
+
+  // Then delete the instance.
+  field_delete_instance($instance, FALSE);
+
+  // Now check to see if there are any other instances of the field left.
+  $field = field_info_field($field_name);
+
+  if (count($field['bundles']) == 0) {
+    field_delete_field($field_name);
+  }
+  elseif ($activated) {
+    // If there are remaining instances but the field was originally disabled,
+    // disabled it again now.
+    $field['active'] = 0;
+    field_update_field($field);
+  }
+}
+
+
+/**
+ * Implement hook_X() for all Drupal hooks defined with the "hook" protocol
+ */
+$hookfunctiondefs = '';
+foreach( y__protocol_hook(NULL) as $hook ) {
+  $hookfunctiondefs .= ' function y_' . $hook . '(){return y__hook("' . $hook . '");}';
+}
+if( $hookfunctiondefs ) {
+  eval( $hookfunctiondefs );
+}
+unset( $hookfunctiondefs );
+unset( $hook );
