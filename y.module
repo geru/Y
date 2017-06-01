@@ -1,5 +1,66 @@
 <?php
 
+/** YAML parsing callbacks *********************************/
+
+/**
+ * YAML parse callback general function call
+ * @return mixed|null
+ */
+function y__yaml_callback_call_user_func_array( $value, $tag, $flags ) {
+  if( is_array($value) ) {
+    $function = array_shift($value);
+  } else {
+    $function =  $value;
+    $value = array();
+  }
+  return function_exists($function) ? call_user_func_array($function, $value) : NULL;
+}
+
+/**
+ * YAML parse callback Drupal t() translate
+ * @return mixed|null
+ */
+function y__yaml_callback_t( $value, $tag, $flags ) {
+  return t($value);
+}
+
+/**
+ * YAML parse callback general variable functionality
+ * @return mixed|null
+ */
+function y__yaml_callback_var( $value, $tag, $flags ) {
+  static $idx = 0;
+  $staticvar = & drupal_static( 'y__static ' . $tag, array() );
+
+  if( !is_array($value) ) {
+    $staticvar[$idx] = $value;
+  } else {
+    foreach( $value as $opcode => $target ) {
+      if( is_numeric($opcode) ) {
+        $translate = array( '++' => 'inc', 'inc' => 'inc',
+          '--' => 'dec', 'dec' => 'dec');
+        $opcode = $translate[$target] ?? NULL;
+        $target = $opcode ? 0 : 1;
+      }
+      switch( $opcode ) {
+        case 'inc':
+        case '+':
+          $staticvar[$idx] = $staticvar[$idx] + $target;
+          break;
+        case 'dec':
+        case '-':
+          $staticvar[$idx] = $staticvar[$idx] - $target;
+          break;
+        default:
+          $staticvar[$opcode] = $target;
+      }
+    }
+  }
+  return $staticvar;
+}
+
+/** Array flattening / unflattening ************************/
+
 /**
  * Flatten an array to one-dimensional with keys imploded with delimiter
  * @param array $array   // array to be flattened
@@ -9,12 +70,12 @@
  * @return array|null    // returns current level of array
  */
 function y__array_flatten( array $array, $prefix='', $delim = ':', &$ret=NULL ) {
-  if( !$ret ) {
+  if( $ret === NULL ) {
     $ret = array();
   }
   foreach( $array as $key => $value ){
     if( is_array($value) ) {
-      y__array_flatten( $value, $prefix . $delim . $key, $delim, $ret );
+      y__array_flatten( $value, $prefix . $key . $delim, $delim, $ret );
     } else {
       $ret[ $prefix . $key ] = $value;
     }
@@ -32,10 +93,12 @@ function y__array_unflatten( array $array, $delim = ':') {
   $ret = array();
   foreach($array as $key => $value) {
     $workret = &$ret;
-    $deepkeys = explode( $key, $delim );
+    $deepkeys = explode( $delim, $key );
     $finalkey = array_shift($deepkeys);
     foreach( $deepkeys as $curkey ) {
-      $workret[$finalkey] = array();
+      if( !isset($workret[$finalkey] ) ) {
+        $workret[$finalkey] = array();
+      }
       $workret = &$workret[$finalkey];
       $finalkey = $curkey;
     }
@@ -44,27 +107,7 @@ function y__array_unflatten( array $array, $delim = ':') {
   return $ret;
 }
 
-/**
- * YAML parse callback general function call
- * @return mixed|null
- */
-function y__yaml_callback_call_user_func_array( $value, $tag, $flags ) {
-  if( is_array($value) ) {
-    $function = array_shift($value);
-  } else {
-    $function =  $value;
-    $value = array();
-  }
-  return function_exists($function) ? call_user_func_array($function, $value) : NULL;
-}
-
-/**
- * YAML parse callback general function call
- * @return mixed|null
- */
-function y__yaml_callback_t( $value, $tag, $flags ) {
-  return t($value);
-}
+/** Main YAML retrieval ************************************/
 
 /**
  * Fetch all of the information defined by the owning module according to the protocol
@@ -122,7 +165,8 @@ function y__info( $owner = NULL, $protocol, $format='tree' ) {
   foreach( $modules as $module ) {
     $callbacks = array(
       '!t' => 'y__yaml_callback_t',
-      '!call' => 'y__yaml_callback_call_user_func_array' );
+      '!call' => 'y__yaml_callback_call_user_func_array',
+      '!var' => 'y__yaml_callback_var');
     // get config path for the module
     if( !isset($yinfo['_config'][$module] ) ) {
       $modulepath = drupal_get_path('module', $module) . '/';
@@ -165,22 +209,40 @@ function y__info( $owner = NULL, $protocol, $format='tree' ) {
   return $owner ? (isset($yinfo[$protocol][$owner][$format]) ? $yinfo[$protocol][$owner][$format] : array()) : $yinfo[$protocol];
 }
 
+/** YAML build functions ***********************************/
+
 /**
- * Main y controller router
- * @param $protocol
- * @param ... more parameters
- * @return array of protocol information supplied by controller
+ * Build config array from patterns
+ * @param $module the module defining the configuration
+ * @param $protocol the protocol defined
+ * @param $patterns the patterns to match
+ * @param null & $ret merge results into this array if passed in
+ * @return array resulting array
  */
-function y__protocol() {
-  $args = func_get_args();
-  if( count($args) ) {
-    $protocol = array_shift( $args );
-    if( $protocolcontroller = 'y__protocol_' . $protocol ) {
-      if( function_exists($protocolcontroller) ) {
-        return call_user_func_array($protocolcontroller, $args);
-      }
+function y__build_pattern( $module, $protocol, $patterns, &$ret=NULL ) {
+  $yinfo = y__info( $module, $protocol, 'flat' );
+  $buildflat = array();
+  foreach( $patterns as $pattern => $filter ) {
+    if( !is_array($filter) ) { // this is a simple pattern
+      $pattern = '|^' . strtr($pattern, array('*' => '([^:]*?)')) . '(.*)|';
+      $mainpattern = $pattern;
+      $mainreplacement = $filter;
+    } else { // this is pure regex and all patterns and replacements are regex-perfect
+      $mainpattern = array_keys($filter);
+      $mainreplacement = array_values($filter);
+    }
+    $matchingkeys = preg_grep($pattern, array_keys($yinfo));
+    $replacementkeys = preg_replace( $mainpattern, $mainreplacement, $matchingkeys );
+    foreach( $matchingkeys as $index => $key ) {
+      $buildflat[$replacementkeys[$index]] = $yinfo[$key];
     }
   }
+  $buildflat = y__array_unflatten($buildflat);
+  if( $ret === NULL ) {
+    return $buildflat;
+  }
+  $ret = array_merge($ret, y__array_unflatten($buildflat));
+  return $ret;
 }
 
 /**
@@ -271,35 +333,27 @@ function y__build_config( $module, $protocol, $api, $source_target=array('proper
   return $ret;
 }
 
-/*  
-function y__expand( $module, $protocol ) {
-  y__info( $module, $protocol );
-  $yinfo = &drupal_static('y__info'); // it is defined at this point
-  if( $specialfunc = preg_grep('^@',$yinfo[$module][$protocol]['flat']) ) {
-    
-  
-    foreach( $specialkeys as $specialkey ) {
-      
+
+
+/** Packaged YAML protocol controllers *********************/
+
+/**
+ * Main y controller router
+ * @param $protocol
+ * @param ... more parameters
+ * @return array of protocol information supplied by controller
+ */
+function y__protocol() {
+  $args = func_get_args();
+  if( count($args) ) {
+    $protocol = array_shift( $args );
+    if( $protocolcontroller = 'y__protocol_' . $protocol ) {
+      if( function_exists($protocolcontroller) ) {
+        return call_user_func_array($protocolcontroller, $args);
+      }
     }
   }
 }
-
-function y__build_pattern( $module, $protocol, $patterns, &$mergetarget=NULL ) {
-  if( $mergetarget ) {
-    $ret = & $mergetarget;
-  } else {
-    $ret = array();
-  }
-
-  $yinfo = y__info( $module, $protocol );
-
-  foreach(  as $name => $info ) {
-
-
-  }
-  return $ret;
-}
-*
 
 /**
  * Implements protocol 'field'
@@ -311,18 +365,32 @@ function y__protocol_field($module, $api, $name=NULL, $definingmodule=NULL) {
       $mod = $definingmodule ?? $module;
       $yinfo = y__info($mod, 'field' );
       $ret = $yinfo[$mod]['definition'][$api];
-      return $ret;
+      break;
   }
+  if( isset($yinfo[$mod]['local_hooks']) ) {
+    $hookfunctiondefs = '';
+    foreach( $yinfo[$mod]['local_hooks'] as $hook => $info ) {
+      $function = $module . '_' . $hook;
+      if( !function_exists($function) ) {
+        $hookfunctiondefs .= ' function ' . $function . '(){return ' . var_export($info, TRUE) . ';}';
+      }
+    }
+    if( $hookfunctiondefs ) {
+      eval( $hookfunctiondefs );
+    }
+  }
+  return $ret;
 }
 
 /**
  * Implements protocol 'bundle'
  */
-function y__protocol_bundle($module, $api, $name=NULL, $definingmodule, $entity=NULL) {
+function y__protocol_bundle($module, $api, $name=NULL, $definingmodule=NULL, $entity=NULL) {
+  $sourcemodule = $definingmodule ?? $module;
   switch( $api ) {
     default:
-      $yinfo = y__info($definingmodule ?? $module, 'field' );
-      return $yinfo['definition'][$api];
+      $yinfo = y__info($sourcemodule, 'bundle' );
+      return $yinfo[$api];
   }
 }
 
@@ -332,10 +400,21 @@ function y__protocol_bundle($module, $api, $name=NULL, $definingmodule, $entity=
  */
 function y__protocol_entity($module, $api, &$info = NULL) {
   switch( $api ) {
-    case 'schema':              return y__build_config($module, 'entity', 'schema', array('properties' => 'fields'));
-    case 'info':                return y__build_config($module, 'entity', 'info');
-    case 'property info alter': return y__build_config($module, 'entity', 'property info alter', array( 'properties' => null ), $info );
+    case 'schema':
+      $ret = y__build_pattern( $module, 'entity',
+        array( "*:schema:" => '$1:$2',
+               "*:properties:*:schema:" => '$1:fields:$2:$3' ) );
+      break;
+    case 'info':
+      $ret = y__build_pattern( $module, 'entity',
+        array( "*:$api:" => '$1:$2' ));
+      break;
+    default:
+    case 'property info alter':
+      $ret = y__build_pattern($module, 'entity',
+        array( "*:properties:*:$api" => '$1:$2:$3'), $info );
   }
+  return $ret;
 }
 
 /**
@@ -349,7 +428,7 @@ function y__protocol_hook( $hookname ) {
 
   if( $firsttime && ($hookmodules = y__info(NULL, 'hook')) ) {
     foreach ($hookmodules as $module => $drupalhooks) {
-      foreach ($drupalhooks as $hook => $hookinfo) {
+      foreach ($drupalhooks['tree'] as $hook => $hookinfo) {
         $hookaggregate[$hook] = isset($hookaggregate[$hook]) ? array_merge($hookaggregate[$hook], $hookinfo) : $hookinfo;
       }
     }
@@ -437,9 +516,9 @@ function y__field_delete($field_name) {
  * @see https://www.drupal.org/docs/7/api/entity-api/property-info-for-fields
  */
 function y__field_property_info_callback(&$info, $entity_type, $field, $instance, $field_type) {
-  $name = $field['field_name'];
-  $property = &$info[$entity_type]['bundles'][$instance['bundle']]['properties'][$name];
-  $property = y__protocol_field($field->type, 'property_info');
+  // $name = $field['field_name'];
+  // $property = &$info[$entity_type]['bundles'][$instance['bundle']]['properties'][$name];
+  $property = y__protocol_field($field_type['module'], 'property_info');
   if( $field['cardinality'] !=  1 ) {
     $property['type'] = 'list<' . $property['type'] . '>';
   }
@@ -525,7 +604,7 @@ function y__instance_delete($instance) {
  */
 $hookfunctiondefs = '';
 foreach( y__protocol_hook(NULL) as $hook ) {
-  $hookfunctiondefs .= ' function y_' . $hook . '(){return y__hook("' . $hook . '");}';
+  $hookfunctiondefs .= ' function y_' . $hook . '(){return y__protocol_hook("' . $hook . '");}';
 }
 if( $hookfunctiondefs ) {
   eval( $hookfunctiondefs );
