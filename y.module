@@ -1,5 +1,15 @@
 <?php
 
+// include field management functionality
+require_once 'y.fieldmgt.inc';
+
+/**
+ * Implements hook_hook_info().
+ */
+function y_hook_info() {
+  return array( 'y' => array( 'group' => 'y') );
+}
+
 /** YAML parsing callbacks *********************************/
 
 /**
@@ -22,6 +32,19 @@ function y__yaml_callback_call_user_func_array( $value, $tag, $flags ) {
  */
 function y__yaml_callback_t( $value, $tag, $flags ) {
   return t($value);
+}
+
+function y__yaml_callback_eval( $value, $tag, $flags ) {
+  $ret = array();
+  if( !is_array($value) ) {
+    $value = array( $value );
+  }
+  foreach( $value as $key => $evalline ) {
+    $evalline = '$ret[$key]=' . $evalline . ';';
+    eval($evalline);
+  }
+  $retval = ((count($ret) == 1) && is_numeric($key)) ? reset($ret) : $ret;
+  return $retval;
 }
 
 /**
@@ -59,6 +82,58 @@ function y__yaml_callback_var( $value, $tag, $flags ) {
   return $staticvar;
 }
 
+/**
+ * YAML parse callback Set a plugin value
+ * @return mixed|null
+ */
+function y__yaml_callback_plugin_set( $value, $tag, $flags ) {
+  $plugin = & drupal_static('y__yaml_plugin_values', array());
+  $plugin = array_merge( $plugin, $value );
+  return $value;
+}
+
+/**
+ * YAML parse callback set info for menu API discoverable plugin
+ * @return mixed|null
+ * */
+function y__yaml_callback_plugin_menucallback( $value, $tag, $flags ) {
+  $plugin = & drupal_static('y__yaml_plugin_values', array());
+  $includefilearray = array(  'file' => $plugin['file'],
+                              'file path' => $plugin['path'] );
+  $ret = $value + $includefilearray;
+  return $ret;
+}
+
+function y__yaml_callback_plugin_callback( $value, $tag, $flags ) {
+  $result = array();
+  $includefilearray = array();
+  $plugin = & drupal_static('y__yaml_plugin_values', array());
+  if( !is_array($value)) {
+    $result['function'] = $value;
+    $includefilearray['uri'] = $plugin['uri']; 
+  } else {
+    if( !empty($value['plugin']) ) {
+      $keys = is_array($value['plugin']) ? $value['plugin'] : array($value['plugin']);
+      foreach( $keys as $key ) {
+        $includefilearray[$key] = $plugin[$key];  
+      }
+      unset( $value['plugin'] );
+    } 
+    $result = $value;
+  }
+  $result += $includefilearray;
+  return $result;
+}
+
+/**
+ * Set plugin values
+ * @param array $initarray
+ */
+function y__yaml_plugin_values( $initarray=array() ) {
+  $plugin = & drupal_static('y__yaml_plugin_values', array());
+  $plugin = $initarray;
+}
+
 /** Array flattening / unflattening ************************/
 
 /**
@@ -74,7 +149,7 @@ function y__array_flatten( array $array, $prefix='', $delim = ':', &$ret=NULL ) 
     $ret = array();
   }
   foreach( $array as $key => $value ){
-    if( is_array($value) ) {
+    if( is_array($value) && $value ) {
       y__array_flatten( $value, $prefix . $key . $delim, $delim, $ret );
     } else {
       $ret[ $prefix . $key ] = $value;
@@ -166,13 +241,28 @@ function y__info( $owner = NULL, $protocol, $format='tree' ) {
     $callbacks = array(
       '!t' => 'y__yaml_callback_t',
       '!call' => 'y__yaml_callback_call_user_func_array',
-      '!var' => 'y__yaml_callback_var');
+      '!var' => 'y__yaml_callback_var',
+      '!setplugin' => 'y__yaml_callback_plugin_set',
+      '!menucallback' => 'y__yaml_callback_plugin_menucallback',
+      '!callback' => 'y__yaml_callback_plugin_callback',
+      '!eval' => 'y__yaml_callback_eval',
+    );
     // get config path for the module
     if( !isset($yinfo['_config'][$module] ) ) {
       $modulepath = drupal_get_path('module', $module) . '/';
       foreach( array($modulepath => $module . '.yaml', $modulepath . 'config/' => '_config.yaml') as $path => $filename ) {
         if (file_exists($path . $filename) ) {
-          // todo: find callbacks yaml and callbacks PHP if they will be found
+          $filebase = pathinfo($filename, PATHINFO_FILENAME);
+          y__yaml_plugin_values(
+            array(
+              'path' => $path,
+              'type' => '_config',
+              'file' => $filebase . 'inc',
+              'uri' => $path . $filebase . '.inc',
+              'name' => $filebase, // 'bctype'
+              'yaml uri' => $path . $filename, // 'sites/all/modules/enterprise/bc/config/entity/bctype.yaml'
+              'filename' => $filename // 'bctype.yaml'
+            ) );
           if((($_config = yaml_parse($path . $filename, 0, $n, $callbacks)) !== FALSE)) {
             if (!isset($_config['path'])) {
               $_config['path'] = $path;
@@ -189,24 +279,62 @@ function y__info( $owner = NULL, $protocol, $format='tree' ) {
       $initarray = isset($yinfo['_config'][$module][$protocol]) ? $yinfo['_config'][$module][$protocol] : array();
       $filename = $conf['path'] . $protocol . '.yaml';
       // todo: find callbacks yaml and callbacks PHP if they will be found
-      $protocolinfo = file_exists($filename)
-        ? (($info = yaml_parse_file($filename, 0, $n, $callbacks)) !== FALSE ? $info : $initarray)
-        : $initarray;
+      if( file_exists($filename) ) {
+        y__yaml_plugin_values(
+          array(
+            'path' => $conf['path'],
+            'type' => $protocol,
+            'file' => $protocol . '.inc',
+            'uri' => $conf['path'] . $protocol . '.inc',
+            'name' => $protocol, // 'bctype'
+            'yaml uri' => $filename, // 'sites/all/modules/enterprise/bc/config/entity/bctype.yaml'
+            'filename' => $protocol . '.yaml' // 'bctype.yaml'
+          ) );
+        // $protocolinfo = (($info = yaml_parse_file($filename, 0, $n, $callbacks)) !== FALSE ? $info : $initarray);
+        if( ($info = yaml_parse_file($filename, 0, $n, $callbacks)) !== FALSE ) {
+          $protocolinfo = $info;
+        } else {
+          $protocolinfo = $initarray;
+          drupal_set_message('Y ' . __FUNCTION__ . '(' . __LINE__ . ') error parsing ' . $filename, 'warning');
+        }
+      } else {
+        $protocolinfo = $initarray; 
+      }
       $yinfo[$protocol][$module] = $protocolinfo
         ? array( 'tree' => $protocolinfo,
                  'flat' => y__array_flatten($protocolinfo) )
         : array( 'tree' => array(), 'flat' => array() );
 
       foreach (file_scan_directory($conf['path'] . $protocol, '|.*\.y.?ml|') as $file) {
+        y__yaml_plugin_values(
+          array(
+            'path' => $conf['path'] . $protocol . '/',
+            'type' => $protocol,
+            'file' => $file->name . '.inc',
+            'uri' => $conf['path'] . $protocol . '/' . $file->name . '.inc',
+            'name' => $file->name, // 'bctype'
+            'yaml uri' => $file->uri, // 'sites/all/modules/enterprise/bc/config/entity/bctype.yaml'
+            'filename' => $file->filename // 'bctype.yaml'
+         ) );
         if (($info = yaml_parse_file($file->uri, 0, $n, $callbacks)) !== FALSE) {
           $yinfo[$protocol][$module] = array(
             'tree' => array_merge($yinfo[$protocol][$module]['tree'], $info ),
             'flat' => array_merge($yinfo[$protocol][$module]['flat'], y__array_flatten($info) ) );
+        } else {
+          drupal_set_message('Y ' . __FUNCTION__ . '(' . __LINE__ . ') error parsing ' . $file->uri, 'warning');
         }
       }
     }
   }
-  return $owner ? (isset($yinfo[$protocol][$owner][$format]) ? $yinfo[$protocol][$owner][$format] : array()) : $yinfo[$protocol];
+  if( $owner ) {
+    return isset($yinfo[$protocol][$owner][$format]) ? $yinfo[$protocol][$owner][$format] : array();
+  } else {
+    $ret = array();
+    foreach( $yinfo[$protocol] as $name => $info ) {
+      $ret = array_merge( $ret, $format == 'tree' ? array( $name => $info['tree'] ) : $info['flat'] );
+    }
+    return $ret;
+  }
 }
 
 /** YAML build functions ***********************************/
@@ -241,99 +369,54 @@ function y__build_pattern( $module, $protocol, $patterns, &$ret=NULL ) {
   if( $ret === NULL ) {
     return $buildflat;
   }
-  $ret = array_merge($ret, y__array_unflatten($buildflat));
+  $ret = array_merge($ret, $buildflat);
   return $ret;
 }
 
 /**
- * Build a configuration array from YAML
- * @param $module // calling module / module with the configuration files
- * @param $protocol // defined protocol getting parsed
- * @param $api // api to search for array of key-pairs (api2searchfor => array2searchin)
- * @param $common // array of common fields
- * @return array
- * 
- * Example 1: build a schema using the 'entity' protocol
- *   y__build_config( 'bc', 'entity', 'schema', array( 'properties' => 'fields' ), 'description' )
- * parses the "entity" protocol found in the "bc" module configuration.
- * uses the 'schema' element for information with the expectation that this is something expected by schema or hook_schema
- * searches the array called 'properties' for elements and moves the schema parts of each element to a target sub-array called 'fields
- * When it finds a field called 'description', that gets transferred to its child target if the child target doesn't have its own description
- * 
- * Example 2: build a bundle definition using the 'bctype' protocol
- *   y__build_config('bc', 'bctype', 'bundle', array('bundle'))
- * parses the 'bctype' protocol found in the configuration.
- * looks for the 'bundle' information
- * adds common 'description' and 'label' fields from bctype definition 
- * 
+ * Build branch array to root from pattern
+ * @param $module the module defining the configuration
+ * @param $protocol the protocol defined
+ * @param $pattern the pattern to match
+ * @param null & $ret merge results into this array if passed in
+ * @return array resulting array
  */
-function y__build_config( $module, $protocol, $api, $source_target=array('properties' => null), &$mergetarget=null, $common=array('description', 'label') ) {
-  if( !is_array($common) ) {
-    $common = array( $common );
-  }
-  if( $mergetarget ) {
-    $ret = & $mergetarget;
-  } else {
-    $ret = array();
-  }
-  
-  $target = reset($source_target);
-  foreach( y__info($module, $protocol) as $name => $info ) {
-    if( !isset($ret[$name]) || !is_array($ret[$name]) ) {
-      $ret[$name] = array();
-    }
-
-    if( $target ) {
-      foreach ($common as $label) {
-        if (isset($info[$label])) {
-          $ret[$name][$label] = $info[$label];
-        }
-      }
-    }
-    if( isset($info[$api]) ) {
-      $ret[$name] = array_merge($ret[$name], $info[$api] );
-    }
-    foreach( $source_target as $source => $target ) {
-      if( $source ) { // execute if associative array
-        if ($target && !isset($ret[$name][$target])) {
-          $ret[$name][$target] = array();
-        }
-        if ($target) {
-          $targetarray = &$ret[$name][$target];
-        }
-        else {
-          $targetarray = &$ret[$name];
-        }
-
-        if( isset($info[$source])) {
-          foreach ($info[$source] as $p_name => $p_info) {
-            if (isset($p_info[$api])) {
-              if (!isset($targetarray[$p_name])) {
-                $targetarray[$p_name] = array();
-              }
-              foreach ($common as $label) {
-                if (isset($p_info[$label])) {
-                  $targetarray[$p_name][$label] = $p_info[$label];
-                }
-              }
-
-              $targetarray[$p_name] = array_merge($targetarray[$p_name], $p_info[$api]);
+function y__build_branch( $module, $protocol, $pattern, &$ret=NULL ) {
+  $branchsearched = array();
+  $yinfo = y__info( $module, $protocol, 'flat' );
+  $buildflat = array();
+  $childpattern = '|^' . strtr($pattern, array('*' => '([^:]*?)')) . '(.*)|';
+  $matchingkeys = preg_grep($childpattern, array_keys($yinfo));
+  foreach( $matchingkeys as $key ) {
+    $buildflat[$key] = $yinfo[$key];
+    if( ($colpos = strrpos($key, ':')) !== FALSE ) {
+      $key = substr($key, 0, $colpos);
+      if( empty($branchsearched[$key]) ) {
+        $branchsearched[$key] = TRUE;
+        while( ($colpos = strrpos($key, ':')) !== FALSE ) {
+          $key = substr($key, 0, $colpos);
+          $parentpattern = '|^' . $key . ':([^:]*?)$|';
+          $parentkeys = preg_grep($parentpattern, array_keys($yinfo));
+          foreach ($parentkeys as $parentkey) {
+            if (!isset($buildflat[$parentkey])) {
+              $buildflat[$parentkey] = $yinfo[$parentkey];
+            }
+            else {
+              $key = '';
+              break;
             }
           }
         }
-        if (!empty($info[$api])) {
-          $ret[$name] += $info[$api];
-        }
       }
     }
-    if( !$ret[$name] ) {
-      unset( $ret[$name] );
-    }
   }
+  $buildflat = y__array_unflatten($buildflat);
+  if( $ret === NULL ) {
+    return $buildflat;
+  }
+  $ret = array_merge($ret, $buildflat);
   return $ret;
 }
-
-
 
 /** Packaged YAML protocol controllers *********************/
 
@@ -358,8 +441,48 @@ function y__protocol() {
 /**
  * Implements protocol 'field'
  * Returns values defined by the y field protocol
+ * Defined $api's:
+ *   default: is anything in the 'definition' section
+ * 
+ * Implements:
+ *   'local hook' generates local hooks
  */
-function y__protocol_field($module, $api, $name=NULL, $definingmodule=NULL) {
+function y__protocol_field($module, $api, $definingmodule=NULL) {
+  static $localhooksgenerated = array();
+  $mod = $definingmodule ?? $module;
+  switch( $api ) {
+    case 'schema':
+      $ret = y__build_pattern($mod, 'field', array("*:definition:$api:" => '$2'));
+      break;
+    default:
+      $yinfo = y__info($mod, 'field' );
+      $ret = $yinfo[$mod]['definition'][$api];
+      break;
+  }
+  // implement local hooks generation
+  if( isset($yinfo[$mod]['local hooks']) && empty($localhooksgenerated[$module]) ) {
+    $hookfunctiondefs = '';
+    foreach( $yinfo[$mod]['local hooks'] as $hook => $info ) {
+      $function = $module . '_' . $hook;
+      if( !function_exists($function) ) {
+        $hookfunctiondefs .= "\nfunction " . $function . '(){return ' . var_export($info, TRUE) . ';}';
+      }
+    }
+    if( $hookfunctiondefs ) {
+      eval( $hookfunctiondefs );
+    }
+    $localhooksgenerated[$module] = TRUE;
+  }
+
+  return $ret;
+}
+
+/**
+ * Implements protocol 'field'
+ * Returns values defined by the y field protocol
+ */
+function y__protocol_instance($module, $api, $definingmodule=NULL) {
+  static $localhooksgenerated = array();
   switch( $api ) {
     default:
       $mod = $definingmodule ?? $module;
@@ -367,31 +490,22 @@ function y__protocol_field($module, $api, $name=NULL, $definingmodule=NULL) {
       $ret = $yinfo[$mod]['definition'][$api];
       break;
   }
-  if( isset($yinfo[$mod]['local_hooks']) ) {
+  // implement local hooks generation
+  if( isset($yinfo[$mod]['local hooks']) && empty($localhooksgenerated[$module]) ) {
     $hookfunctiondefs = '';
-    foreach( $yinfo[$mod]['local_hooks'] as $hook => $info ) {
+    foreach( $yinfo[$mod]['local hooks'] as $hook => $info ) {
       $function = $module . '_' . $hook;
       if( !function_exists($function) ) {
-        $hookfunctiondefs .= ' function ' . $function . '(){return ' . var_export($info, TRUE) . ';}';
+        $hookfunctiondefs .= "\nfunction " . $function . '(){return ' . var_export($info, TRUE) . ';}';
       }
     }
     if( $hookfunctiondefs ) {
       eval( $hookfunctiondefs );
     }
+    $localhooksgenerated[$module] = TRUE;
   }
-  return $ret;
-}
 
-/**
- * Implements protocol 'bundle'
- */
-function y__protocol_bundle($module, $api, $name=NULL, $definingmodule=NULL, $entity=NULL) {
-  $sourcemodule = $definingmodule ?? $module;
-  switch( $api ) {
-    default:
-      $yinfo = y__info($sourcemodule, 'bundle' );
-      return $yinfo[$api];
-  }
+  return $ret;
 }
 
 /**
@@ -403,211 +517,250 @@ function y__protocol_entity($module, $api, &$info = NULL) {
     case 'schema':
       $ret = y__build_pattern( $module, 'entity',
         array( "*:schema:" => '$1:$2',
+               "*:description" => '$1:description',
                "*:properties:*:schema:" => '$1:fields:$2:$3' ) );
       break;
-    case 'info':
-      $ret = y__build_pattern( $module, 'entity',
-        array( "*:$api:" => '$1:$2' ));
-      break;
-    default:
     case 'property info alter':
       $ret = y__build_pattern($module, 'entity',
-        array( "*:properties:*:$api" => '$1:$2:$3'), $info );
+        array( "*:properties:*:info:" => '$1:properties:$2:$3', ),
+        $info );
+      break;
+    default:
+      $ret = y__build_pattern( $module, 'entity',
+        array( "*:$api:" => '$1:$2' ), $info );
+      break;
   }
   return $ret;
+}
+
+/**
+ * Implements hook_entity_property_info_alter().
+ */
+function y_entity_property_info_alter(&$info) {
+  $ret = y__protocol_entity(NULL, 'property info alter', $info );
 }
 
 /**
  * Implements protocol 'hook' 
  * Returns values defined by modules implementing the y hook protocol
  */
-function y__protocol_hook( $hookname ) {
-  static $firsttime = TRUE;
-  $hookaggregate = &drupal_static(__FUNCTION__, array());
-  // $hookaggregate is an array of the hooks defined keyed by hookname
+function y__protocol_hook( $module, $api=NULL, $hookname=NULL ) {
+  if( !$api ) {
+    $ret = y__build_pattern( $module, 'hook', array( "*:" => '$1:$2' ) );
+  } else {
+    if( $module ) {
+      $ret = y__build_pattern( $module, 'hook', array( "*:$api:" => '$2' ) );
+    } else {
+      $ret =  y__build_pattern( $module, 'hook', array( "*:$api:" => '$1:$2' ) );
+    }
+  }
+  return $ret;
+}
 
-  if( $firsttime && ($hookmodules = y__info(NULL, 'hook')) ) {
-    foreach ($hookmodules as $module => $drupalhooks) {
-      foreach ($drupalhooks['tree'] as $hook => $hookinfo) {
-        $hookaggregate[$hook] = isset($hookaggregate[$hook]) ? array_merge($hookaggregate[$hook], $hookinfo) : $hookinfo;
+/** Function does nothing and can be passed as default to y__plugin so result is guaranteed to be callable */
+function _y__donothing() {
+  return;
+}
+
+/**
+ * Plugin functionality
+ * if '_y__donothing' passed as default, then it always returns a valid callable function name
+ * callback is of form:
+ *   callbackname: name_of_function OR
+ *   callbackname:
+ *     function: name_of_function
+ *     uri: file_containing_function_definition
+ * @param $info an array of configuration information (eg. all the form information associated with an entity) 
+ * @param $type a selector into that array (eg. the bundle name using a form) (use NULL if $info has the callbackname directly)
+ * @param $callbackname the callback name (eg. form validation)
+ * @param string $default (eg. the name of a default function to be returned if nothing else pans out)
+ * @return string the name of a callable function or the default (which may be a callable function name)
+ */
+function y__plugin( array $info, $type, string $callbackname, $default='' ): string {
+  $callback = ($type === NULL)
+    ? $info[$callbackname] ?? $default
+    : $info[$type][$callbackname] ?? $default;
+  if( $callback ) {
+    if( is_array( $callback ) ) {
+      if (!empty($callback['uri']) && file_exists($callback['uri'])) {
+        require_once $callback['uri'];
+      }
+      $callbackname = $callback['function'] ?? $default;
+    } else {
+      $callbackname = $callback;
+    }
+  } else {
+    $callbackname = $default;
+  }
+  $ret = function_exists($callbackname) ? $callbackname : $default;
+  return $ret;
+}
+
+/**
+ * Implements hook_init() and instantiates all Drupal hooks defined with the "hook" protocol
+ */
+function _y_init() {
+  // Instantiate YAML-defined local hooks
+  if ( ($hookfunctiondefs = cache_get(__FUNCTION__)) === FALSE) {
+    $hookfunctiondefs = new stdClass();
+    $hookfunctiondefs->data = '';
+
+    if ($hookdef = y__protocol_hook(NULL, 'local hooks')) {
+      foreach ($hookdef as $hookmodule => $hooks) {
+        foreach ($hooks as $hookname => $hookinfo) {
+          $hookfunctiondefs->data .= "\nfunction " . $hookmodule . '_' . $hookname . '(){return ' . var_export($hookinfo, TRUE) . ';}';
+        }
+      }
+      cache_set(__FUNCTION__, $hookfunctiondefs->data);
+    }
+  }
+  if (!empty($hookfunctiondefs->data)) {
+    try {
+      eval($hookfunctiondefs->data);
+    }
+    catch (ParseError $e) { // got to clear the error-full statement to be able to move forward.
+      cache_set( __FUNCTION__, FALSE );
+      _drupal_exception_handler( $e );
+    }
+  }
+}
+
+/**
+ * Query / display functionality
+ */
+function y__displayresults($table) {
+  $args = func_get_args();
+  $form = array();
+  foreach( $args as $key => $value ) {
+    $form[] = array(
+      '#title' => $key,
+      '#type' => 'textfield',
+      '#value' => (string) $value,
+    );
+  }
+  return $form;
+}
+
+function y__q_datagetter( $datadef ) {
+  foreach( $datadef as $method => $value ) {
+    switch ( $method ) {
+      case 'global':
+        if( is_array($value) ) {
+          foreach( $value as $varname => $varprop ) {
+            global $$varname;
+            return $$varname->$varprop;
+          }
+        } else {
+          global $$value;
+          return $$value;
+        }
+    }
+  }
+  return NULL;
+}
+
+/**
+ * Recursively substitute special patterns in array
+ * @param $var
+ * @param $substarray
+ */
+function _y_var_substitute( & $var, $substarray ) {
+  if( !is_array($var) ) {
+    $var = strtr( $var, $substarray );
+  } else {
+    foreach( $var as & $value ) {
+      _y_var_substitute( $value, $substarray );
+    }
+  }
+}
+
+// Helper function to show a query string
+function y__get_query_string(SelectQueryInterface $query) {
+  $string = (string) $query;
+  $arguments = $query->arguments();
+
+  if (!empty($arguments) && is_array($arguments)) {
+    foreach ($arguments as $placeholder => &$value) {
+      if (is_string($value)) {
+        $value = "'$value'";
       }
     }
-    $firsttime = FALSE;
+
+    $string = strtr($string, $arguments);
   }
-  return $hookname ? ($hookaggregate[$hookname] ?? array()) : array_keys($hookaggregate);
-}
 
-
-/**
- * Attempts to directly activate a field that was disabled due to its module
- * being disabled.
- *
- * The normal API function for updating fields, field_update_field(), will not
- * work on disabled fields. As a workaround, this function directly updates the
- * database, but it is up to the caller to clear the cache.
- *
- *  This is mirror of commerce.module equivalent
- *
- * @param $field_name
- *   The name of the field to activate.
- *
- * @return
- *   Boolean indicating whether or not the field was activated.
- */
-function y__field_activate($field_name) {
-  // Set it to active via a query because field_update_field() does
-  // not work on inactive fields.
-  $updated = db_update('field_config')
-    ->fields(array('active' => 1))
-    ->condition('field_name', $field_name, '=')
-    ->condition('deleted', 0, '=')
-    ->execute();
-
-  return !empty($updated) ? TRUE : FALSE;
+  return $string;
 }
 
 /**
- * Enables and deletes fields of the specified type.
- *
- *  This is mirror of commerce.module equivalent
- *
- * @param $type
- *   The type of fields to enable and delete.
+ * Build a query from a query definition array
+ * @param $config
+ * @return array
  */
-function y__field_delete_multiple($type, $bundle = NULL) {
-  $fields_to_delete = array( 'type' => $type );
-  if( $bundle ) {
-    $fields_to_delete['bundle'] = $bundle;
+function y__view_getquery( $config ) {
+  if( empty($config['base table'])) {
+    return array();
   }
-  // Read the fields for any active or inactive field of the specified type.
-  foreach (field_read_fields($fields_to_delete, array('include_inactive' => TRUE)) as $field_name => $field) {
-    y__field_delete($field_name);
+
+  $config += array( 'arguments' => array(), 'build' => array() );
+  // Get data values
+  foreach( $config['arguments'] as $name => &$value ) {
+    $value = y__q_datagetter( $value );
   }
+
+  // Make the query
+  $basetable = reset($config['base table']);
+  $basetablealias = $config['base table'][$basetable];
+  $query = db_select( $basetable, $basetablealias );
+  foreach( $config['build'] as $querycfg ) {
+    foreach( $querycfg as $db_op => $args ) {
+      _y_var_substitute($args, $config['arguments']);
+      if ( in_array($db_op, array( 'addExpression',
+        'addField',
+        'addJoin',
+        'extend',
+        'innerJoin',
+        'join',
+        'leftJoin',
+        'rightJoin', ) ) ) {
+        $query = call_user_func_array(array($query, $db_op), $args);
+      }
+      else {
+        call_user_func_array( array($query, $db_op), $args);
+      }
+    }
+  }
+  return $query;
 }
 
 /**
- * Enables and deletes the specified field.
- *
- * The normal API function for deleting fields, field_delete_field(), will not
- * work on disabled fields. As a workaround, this function first activates the
- * fields of the specified type and then deletes them.
- *
- * This is mirror of commerce.module equivalent
- *
- * @param $field_name
- *   The name of the field to enable and delete.
+ * Execute a query and display and return results
+ * @param $config array of query, arguments, and display
+ *   base table:
+ *     base_table_name: base_table_name_alias
+ *   arguments:
+ *     name_of_arg: definition_of_arg (see y__q_datagetter for how to define this
+ *   query:
+ *   - operation: arguments
+ *     differentoperation: arguments
+ *   - operation: morearguments...
+ *   display:
+ * @return array
  */
-function y__field_delete($field_name) {
-  // In case the field is inactive, first activate it and clear the field cache.
-  if (y__field_activate($field_name)) {
-    field_cache_clear();
+function y__view($config) {
+
+  if( empty($config['query']) || !($query = y__view_getquery($config['query']))) {
+    return array();
+  }
+  $querystring = y__get_query_string($query);
+  $queryresult = $query->execute();
+
+  // Return results or display output
+  if( $displayfunction = y__plugin($config, 'display', 'display callback') ) {
+    $ret = call_user_func_array( $displayfunction, array( $queryresult ) );
+  } else {
+    $ret = $queryresult->fetchAllKeyed();
   }
 
-  // Delete the field.
-  field_delete_field($field_name);
+  return $ret;
 }
-
-/**
- * Sets property info of fields.
- *
- * @see hook_field_info(),
- * @see entity_metadata_field_entity_property_info()
- * @see entity_field_info_alter()
- * @see https://www.drupal.org/docs/7/api/entity-api/property-info-for-fields
- */
-function y__field_property_info_callback(&$info, $entity_type, $field, $instance, $field_type) {
-  // $name = $field['field_name'];
-  // $property = &$info[$entity_type]['bundles'][$instance['bundle']]['properties'][$name];
-  $property = y__protocol_field($field_type['module'], 'property_info');
-  if( $field['cardinality'] !=  1 ) {
-    $property['type'] = 'list<' . $property['type'] . '>';
-  }
-
-  unset($property['query callback']);
-}
-
-/**
- * Deletes any field instance attached to entities of the specified type,
- * regardless of whether or not the field is active.
- *
- * This is mirror of commerce.module equivalent
- *
- * @param $entity_type
- *   The type of entity whose fields should be deleted.
- * @param $bundle
- *   Optionally limit instance deletion to a specific bundle of the specified
- *   entity type.
- */
-function y__instance_delete_multiple($entity_type, $bundle = NULL) {
-  // Prepare a parameters array to load the specified instances.
-  $params = array(
-    'entity_type' => $entity_type,
-  );
-
-  if (!empty($bundle)) {
-    $params['bundle'] = $bundle;
-    // Delete this bundle's field bundle settings.
-    variable_del('field_bundle_settings_' . $entity_type . '__' . $bundle);
-  }
-  else {
-    // Delete all field bundle settings for this entity type.
-    db_delete('variable')
-      ->condition('name', db_like('field_bundle_settings_' . $entity_type . '__') . '%', 'LIKE')
-      ->execute();
-  }
-
-  // Read and delete the matching field instances.
-  foreach (field_read_instances($params, array('include_inactive' => TRUE)) as $instance) {
-    y__instance_delete($instance);
-  }
-}
-
-/**
- * Deletes the specified instance and handles field cleanup manually in case the
- * instance is of a disabled field.
- *
- * This is mirror of commerce.module equivalent
- *
- * @param $instance
- *   The field instance info array to be deleted.
- */
-function y__instance_delete($instance) {
-  // First activate the instance's field if necessary.
-  $field_name = $instance['field_name'];
-  $activated = y__field_activate($field_name);
-
-  // Clear the field cache if we just activated the field.
-  if ($activated) {
-    field_cache_clear();
-  }
-
-  // Then delete the instance.
-  field_delete_instance($instance, FALSE);
-
-  // Now check to see if there are any other instances of the field left.
-  $field = field_info_field($field_name);
-
-  if (count($field['bundles']) == 0) {
-    field_delete_field($field_name);
-  }
-  elseif ($activated) {
-    // If there are remaining instances but the field was originally disabled,
-    // disabled it again now.
-    $field['active'] = 0;
-    field_update_field($field);
-  }
-}
-
-
-/**
- * Implement hook_X() for all Drupal hooks defined with the "hook" protocol
- */
-$hookfunctiondefs = '';
-foreach( y__protocol_hook(NULL) as $hook ) {
-  $hookfunctiondefs .= ' function y_' . $hook . '(){return y__protocol_hook("' . $hook . '");}';
-}
-if( $hookfunctiondefs ) {
-  eval( $hookfunctiondefs );
-}
-unset( $hookfunctiondefs );
-unset( $hook );
