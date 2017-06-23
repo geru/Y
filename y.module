@@ -82,12 +82,38 @@ function y__yaml_callback_var( $value, $tag, $flags ) {
   return $staticvar;
 }
 
+// push var onto top of the stack
+function _y__stack_push( $stackname, $var ) {
+  $stack = & drupal_static($stackname, array());
+  array_push($stack, $var);
+}
+
+// pop top element off stack
+function _y__stack_pop( $stackname ) {
+  $stack = & drupal_static($stackname, array());
+  return array_pop($stack);
+}
+
+// get value of current stop of stack
+function _y__stack_peek( $stackname ) {
+  $stack = & drupal_static($stackname, array());
+  return end($stack);
+}
+
+// change current element at top of stack (equiv of pop then push
+function _y__stack_set( $stackname, $var ) {
+  $stack = & drupal_static($stackname, array());
+  array_pop($stack);
+  array_push($stack, $var);
+}
+
 /**
  * YAML parse callback Set a plugin value
  * @return mixed|null
  */
 function y__yaml_callback_plugin_set( $value, $tag, $flags ) {
-  $plugin = & drupal_static('y__yaml_plugin_values', array());
+  //$plugin = & drupal_static('y__yaml_plugin_values', array());
+  $plugin = & _y__stack_peek('y__yaml_plugin_values');
   $plugin = array_merge( $plugin, $value );
   return $value;
 }
@@ -97,7 +123,7 @@ function y__yaml_callback_plugin_set( $value, $tag, $flags ) {
  * @return mixed|null
  * */
 function y__yaml_callback_plugin_menucallback( $value, $tag, $flags ) {
-  $plugin = & drupal_static('y__yaml_plugin_values', array());
+  $plugin = _y__stack_peek('y__yaml_plugin_values');
   $includefilearray = array(  'file' => $plugin['file'],
                               'file path' => $plugin['path'] );
   $ret = $value + $includefilearray;
@@ -107,7 +133,8 @@ function y__yaml_callback_plugin_menucallback( $value, $tag, $flags ) {
 function y__yaml_callback_plugin_callback( $value, $tag, $flags ) {
   $result = array();
   $includefilearray = array();
-  $plugin = & drupal_static('y__yaml_plugin_values', array());
+  // $plugin = & drupal_static('y__yaml_plugin_values', array());
+  $plugin = _y__stack_peek('y__yaml_plugin_values');
   if( !is_array($value)) {
     $result['function'] = $value;
     $includefilearray['uri'] = $plugin['uri']; 
@@ -125,15 +152,24 @@ function y__yaml_callback_plugin_callback( $value, $tag, $flags ) {
   return $result;
 }
 
+function y__yaml_callback_plugin_protocol( $value, $tag, $flags ) {
+  // $plugin = & drupal_static('y__yaml_plugin_values', array());
+  $plugin = _y__stack_peek('y__yaml_plugin_values');
+  $params = $value + $plugin;
+  $yinfo = y__protocol( $params['target'], $params['module'], $params['api'] );
+  $ret = $yinfo[$params['id']] ?? array();
+  return $ret;
+}
+
 /**
  * Set plugin values
  * @param array $initarray
- */
+
 function y__yaml_plugin_values( $initarray=array() ) {
   $plugin = & drupal_static('y__yaml_plugin_values', array());
   $plugin = $initarray;
 }
-
+*/
 /** Array flattening / unflattening ************************/
 
 /**
@@ -193,7 +229,7 @@ function y__array_unflatten( array $array, $delim = ':') {
  * todo: add callback indexing and caching
  */
 function y__info( $owner = NULL, $protocol, $format='tree' ) {
-  $modulesimplement = &drupal_static(__FUNCTION__ . ':modulesimplement', array());
+  $modulesimplement = &drupal_static(__FUNCTION__ . ':modulesimplement', NULL);
   // An array keyed by protocol of the modules implementing the protocol
   // Eg. $modulesimplement['hook'] = array( 'bc', 'bcfeeds' )
 
@@ -206,33 +242,56 @@ function y__info( $owner = NULL, $protocol, $format='tree' ) {
   // Eg. $yinfo[$protocol][$module] = array(... )
 
   // Initialize self
-  if( !isset($modulesimplement[$protocol]) ) {
-    // any time a new protocol is requested, something has changed, clear information and reload
+  if( $modulesimplement === NULL ) { // todo: getting burned by this logic if hook not declared by hook_y()
     $modulesimplement = array();
-    $modulesimplement[$protocol] = array();
-    $protocolsimplemented = array();
-    $yinfo = array();
-    $modules = module_implements( 'y' );
-    foreach( $modules as $module ) {
+    // any time a new protocol is requested, something has changed, clear information and reload
+    //$modulesimplement = array();
+    // $modulesimplement[$protocol] = array();
+    // $protocolsimplemented = array();
+  }
+  if( !isset($modulesimplement[$protocol]) || ($owner && !isset($protocolsimplemented[$owner])) ) {
+    $modules = module_implements('y');
+    foreach ($modules as $module) {
       $protocolsimplemented[$module] = module_invoke($module, 'y');
-      foreach( $protocolsimplemented[$module] as $p ){
-        if( !isset($modulesimplement[$p])) {
+      foreach ($protocolsimplemented[$module] as $p) {
+        if (!isset($modulesimplement[$p])) {
           $modulesimplement[$p] = array();
         }
         $modulesimplement[$p][] = $module;
-        if( !isset($yinfo[$p]) ) {
+        if (!isset($yinfo[$p])) {
           $yinfo[$p] = array();
         }
       }
     }
   }
-
   $modules = $owner
     ? array($owner)
     : $modulesimplement[$protocol] ?? array();
   if( !$modules ) {
     return( array() );
   }
+  //    $warning = t( 'Undeclared protocol !protocol requested. Owner: !owner.', array('!protocol' => $protocol, '!owner' => $owner));
+  //    watchdog('Y', $warning);
+  //    drupal_set_message('Y: ' . $warning, 'error');
+  $backdoor = & drupal_static('y__backdoor_for_uninstall');
+  if( $owner && !$backdoor ) {
+    if (!isset($protocolsimplemented[$owner])) { // This happens for hook_schema... trouble
+        return array();
+    } else {
+      if (!in_array($protocol, $protocolsimplemented[$owner])) {
+        $warning = t('Protocol !protocol requested  of module !module that does not support it.', array(
+          '!protocol' => $protocol,
+          '!module' => $owner
+        ));
+        watchdog('Y', $warning);
+        drupal_set_message('Y: ' . $warning, 'error');
+      }
+    }
+  }
+  if( isset($warning) ) {
+    return array();
+  }
+
   if( $owner && isset($yinfo[$protocol][$owner]) ) {
     return $format ? $yinfo[$protocol][$owner][$format] : $yinfo[$protocol][$owner];
   }
@@ -245,18 +304,20 @@ function y__info( $owner = NULL, $protocol, $format='tree' ) {
       '!setplugin' => 'y__yaml_callback_plugin_set',
       '!menucallback' => 'y__yaml_callback_plugin_menucallback',
       '!callback' => 'y__yaml_callback_plugin_callback',
+      '!protocol' => 'y__yaml_callback_plugin_protocol',
       '!eval' => 'y__yaml_callback_eval',
     );
     // get config path for the module
     if( !isset($yinfo['_config'][$module] ) ) {
-      $modulepath = drupal_get_path('module', $module) . '/';
+      $modulepath = ($backdoor ?? drupal_get_path('module', $module)) . '/';
       foreach( array($modulepath => $module . '.yaml', $modulepath . 'config/' => '_config.yaml') as $path => $filename ) {
         if (file_exists($path . $filename) ) {
           $filebase = pathinfo($filename, PATHINFO_FILENAME);
-          y__yaml_plugin_values(
+          _y__stack_push( 'y__yaml_plugin_values',
             array(
               'path' => $path,
-              'type' => '_config',
+              'module' => $module,
+              'protocol' => '_config',
               'file' => $filebase . 'inc',
               'uri' => $path . $filebase . '.inc',
               'name' => $filebase, // 'bctype'
@@ -268,8 +329,10 @@ function y__info( $owner = NULL, $protocol, $format='tree' ) {
               $_config['path'] = $path;
               $_config['filename'] = $filename;
             }
+            _y__stack_pop('y__yaml_plugin_values');
             break;
           }
+          _y__stack_pop('y__yaml_plugin_values');
         }
       }
       $yinfo['_config'][$module] = $_config ?? array('path' => $modulepath . 'config/');
@@ -280,10 +343,11 @@ function y__info( $owner = NULL, $protocol, $format='tree' ) {
       $filename = $conf['path'] . $protocol . '.yaml';
       // todo: find callbacks yaml and callbacks PHP if they will be found
       if( file_exists($filename) ) {
-        y__yaml_plugin_values(
+        _y__stack_push('y__yaml_plugin_values',
           array(
             'path' => $conf['path'],
-            'type' => $protocol,
+            'module' => $module,
+            'protocol' => $protocol,
             'file' => $protocol . '.inc',
             'uri' => $conf['path'] . $protocol . '.inc',
             'name' => $protocol, // 'bctype'
@@ -297,6 +361,7 @@ function y__info( $owner = NULL, $protocol, $format='tree' ) {
           $protocolinfo = $initarray;
           drupal_set_message('Y ' . __FUNCTION__ . '(' . __LINE__ . ') error parsing ' . $filename, 'warning');
         }
+        _y__stack_pop('y__yaml_plugin_values');
       } else {
         $protocolinfo = $initarray; 
       }
@@ -306,10 +371,11 @@ function y__info( $owner = NULL, $protocol, $format='tree' ) {
         : array( 'tree' => array(), 'flat' => array() );
 
       foreach (file_scan_directory($conf['path'] . $protocol, '|.*\.y.?ml|') as $file) {
-        y__yaml_plugin_values(
+        _y__stack_push('y__yaml_plugin_values',
           array(
             'path' => $conf['path'] . $protocol . '/',
-            'type' => $protocol,
+            'module' => $module,
+            'protocol' => $protocol,
             'file' => $file->name . '.inc',
             'uri' => $conf['path'] . $protocol . '/' . $file->name . '.inc',
             'name' => $file->name, // 'bctype'
@@ -323,6 +389,7 @@ function y__info( $owner = NULL, $protocol, $format='tree' ) {
         } else {
           drupal_set_message('Y ' . __FUNCTION__ . '(' . __LINE__ . ') error parsing ' . $file->uri, 'warning');
         }
+        _y__stack_pop('y__yaml_plugin_values');
       }
     }
   }
@@ -421,6 +488,32 @@ function y__build_branch( $module, $protocol, $pattern, &$ret=NULL ) {
 /** Packaged YAML protocol controllers *********************/
 
 /**
+ * Iterate through a set of protocols and get an array of all the api information in them.
+ * @param array $protocols
+ * @param $module
+ * @param $api
+ * @return array
+ */
+function y__protocol_get_all( $protocols, $module, $api ) {
+  if( !is_array($protocols) ) {
+    $protocols = array($protocols);
+  }
+  $ret = array();
+  foreach( $protocols as $protocol ) {
+    $ret += y__protocol( $protocol, $module, $api );
+  }
+  return $ret;
+}
+
+/**
+ * @param string $path path to module, provides backdoor when uninstalling
+ */
+function y__modulepath_set_override( string $path ) {
+  $modulepath = & drupal_static('y__backdoor_for_uninstall');
+  $modulepath = $path;
+}
+
+/**
  * Main y controller router
  * @param $protocol
  * @param ... more parameters
@@ -428,14 +521,26 @@ function y__build_branch( $module, $protocol, $pattern, &$ret=NULL ) {
  */
 function y__protocol() {
   $args = func_get_args();
+  $tmparray = $args[3] ?? NULL;
   if( count($args) ) {
-    $protocol = array_shift( $args );
-    if( $protocolcontroller = 'y__protocol_' . $protocol ) {
-      if( function_exists($protocolcontroller) ) {
-        return call_user_func_array($protocolcontroller, $args);
-      }
+    $protocolcontroller = 'y__protocol_' . $args[0];
+    if( isset($tmparray) ) { // this funkiness has to happen because call_user_func doesn't take references easily, see PHP manual
+      $args[3] = &$tmparray;
     }
+    if( function_exists($protocolcontroller) ) {
+      array_shift( $args );
+      return call_user_func_array($protocolcontroller, $args);
+    }
+    return call_user_func_array('_y__protocol_default', $args);
   }
+  return array();
+}
+
+function _y__protocol_default( string $protocol, $module, string $api, array &$info=NULL) {
+  $ret = $module && in_array($api, array('menu')) // this array is for hooks where every sub-element is unique, like permissions, or menu hooks
+    ? y__build_pattern($module, $protocol, array("*:$api:" => '$2'), $info)
+    : y__build_pattern($module, $protocol, array("*:$api:" => '$1:$2'), $info);
+  return $ret;
 }
 
 /**
@@ -447,64 +552,27 @@ function y__protocol() {
  * Implements:
  *   'local hook' generates local hooks
  */
-function y__protocol_field($module, $api, $definingmodule=NULL) {
-  static $localhooksgenerated = array();
-  $mod = $definingmodule ?? $module;
+function y__protocol_field($module, string $api, array &$info=NULL) {
+  $ret = isset($info) ? $info : array();
   switch( $api ) {
     case 'schema':
-      $ret = y__build_pattern($mod, 'field', array("*:definition:$api:" => '$2'));
+      $ret = y__build_pattern($module, 'field', array("*:definition:$api:" => '$2'), $ret);
       break;
     default:
-      $yinfo = y__info($mod, 'field' );
-      $ret = $yinfo[$mod]['definition'][$api];
+      $yinfo = y__info($module, 'field' );
+      $ret += $yinfo[$module]['definition'][$api];
       break;
-  }
-  // implement local hooks generation
-  if( isset($yinfo[$mod]['local hooks']) && empty($localhooksgenerated[$module]) ) {
-    $hookfunctiondefs = '';
-    foreach( $yinfo[$mod]['local hooks'] as $hook => $info ) {
-      $function = $module . '_' . $hook;
-      if( !function_exists($function) ) {
-        $hookfunctiondefs .= "\nfunction " . $function . '(){return ' . var_export($info, TRUE) . ';}';
-      }
-    }
-    if( $hookfunctiondefs ) {
-      eval( $hookfunctiondefs );
-    }
-    $localhooksgenerated[$module] = TRUE;
   }
 
   return $ret;
 }
 
 /**
- * Implements protocol 'field'
- * Returns values defined by the y field protocol
+ * Implements protocol 'instance'
+ * Returns values defined by the y instance protocol
  */
-function y__protocol_instance($module, $api, $definingmodule=NULL) {
-  static $localhooksgenerated = array();
-  switch( $api ) {
-    default:
-      $mod = $definingmodule ?? $module;
-      $yinfo = y__info($mod, 'field' );
-      $ret = $yinfo[$mod]['definition'][$api];
-      break;
-  }
-  // implement local hooks generation
-  if( isset($yinfo[$mod]['local hooks']) && empty($localhooksgenerated[$module]) ) {
-    $hookfunctiondefs = '';
-    foreach( $yinfo[$mod]['local hooks'] as $hook => $info ) {
-      $function = $module . '_' . $hook;
-      if( !function_exists($function) ) {
-        $hookfunctiondefs .= "\nfunction " . $function . '(){return ' . var_export($info, TRUE) . ';}';
-      }
-    }
-    if( $hookfunctiondefs ) {
-      eval( $hookfunctiondefs );
-    }
-    $localhooksgenerated[$module] = TRUE;
-  }
-
+function y__protocol_instance($module, string $api, array &$info=NULL) {
+  $ret = y__build_pattern($module, 'instance', array("*:$api:" => '$1:$2'), $info);
   return $ret;
 }
 
@@ -512,13 +580,13 @@ function y__protocol_instance($module, $api, $definingmodule=NULL) {
  * Implements protocol 'entity'
  * Returns values defined by the y entity protocol
  */
-function y__protocol_entity($module, $api, &$info = NULL) {
+function y__protocol_entity($module, string $api, array &$info = NULL) {
   switch( $api ) {
     case 'schema':
       $ret = y__build_pattern( $module, 'entity',
         array( "*:schema:" => '$1:$2',
                "*:description" => '$1:description',
-               "*:properties:*:schema:" => '$1:fields:$2:$3' ) );
+               "*:properties:*:schema:" => '$1:fields:$2:$3' ), $info );
       break;
     case 'property info alter':
       $ret = y__build_pattern($module, 'entity',
@@ -526,8 +594,7 @@ function y__protocol_entity($module, $api, &$info = NULL) {
         $info );
       break;
     default:
-      $ret = y__build_pattern( $module, 'entity',
-        array( "*:$api:" => '$1:$2' ), $info );
+      $ret = _y__protocol_default( 'entity', $module, $api, $info );
       break;
   }
   return $ret;
@@ -538,23 +605,6 @@ function y__protocol_entity($module, $api, &$info = NULL) {
  */
 function y_entity_property_info_alter(&$info) {
   $ret = y__protocol_entity(NULL, 'property info alter', $info );
-}
-
-/**
- * Implements protocol 'hook' 
- * Returns values defined by modules implementing the y hook protocol
- */
-function y__protocol_hook( $module, $api=NULL, $hookname=NULL ) {
-  if( !$api ) {
-    $ret = y__build_pattern( $module, 'hook', array( "*:" => '$1:$2' ) );
-  } else {
-    if( $module ) {
-      $ret = y__build_pattern( $module, 'hook', array( "*:$api:" => '$2' ) );
-    } else {
-      $ret =  y__build_pattern( $module, 'hook', array( "*:$api:" => '$1:$2' ) );
-    }
-  }
-  return $ret;
 }
 
 /** Function does nothing and can be passed as default to y__plugin so result is guaranteed to be callable */
@@ -576,7 +626,7 @@ function _y__donothing() {
  * @param string $default (eg. the name of a default function to be returned if nothing else pans out)
  * @return string the name of a callable function or the default (which may be a callable function name)
  */
-function y__plugin( array $info, $type, string $callbackname, $default='' ): string {
+function y__plugin( array $info, string $type, string $callbackname, $default='' ): string {
   $callback = ($type === NULL)
     ? $info[$callbackname] ?? $default
     : $info[$type][$callbackname] ?? $default;
@@ -598,7 +648,7 @@ function y__plugin( array $info, $type, string $callbackname, $default='' ): str
 
 /**
  * Implements hook_init() and instantiates all Drupal hooks defined with the "hook" protocol
- */
+
 function _y_init() {
   // Instantiate YAML-defined local hooks
   if ( ($hookfunctiondefs = cache_get(__FUNCTION__)) === FALSE) {
@@ -624,38 +674,77 @@ function _y_init() {
     }
   }
 }
+*/
 
 /**
  * Query / display functionality
  */
-function y__displayresults($table) {
+function y__display_array($table) {
   $args = func_get_args();
-  $form = array();
+  $output = array();
   foreach( $args as $key => $value ) {
-    $form[] = array(
+    $output[] = array(
       '#title' => $key,
       '#type' => 'textfield',
       '#value' => (string) $value,
     );
   }
+  return $output;
+}
+
+function y__display_queryresults( $resultset, $format_def ) {
+  $output = array();
+  $header = array();
+
+  while( $result = $resultset->fetchAssoc() ) {
+    if (!$header) {
+      $header = $format_def['header'] ?? array_combine(array_keys($result), array_keys($result));
+    }
+    if( empty($format_def['cols']) ) {
+      $output[] = $result;
+    } else {
+      $row = array();
+      foreach( $result as $key => $value ) {
+
+      }
+    }
+
+  }
+  $form = array(
+    'books' => array(
+      '#theme' => 'table',
+      '#header' => $header,
+      '#rows' => $output,
+      '#empty' => t('No books available.'),
+    )
+  );
   return $form;
 }
 
-function y__q_datagetter( $datadef ) {
-  foreach( $datadef as $method => $value ) {
-    switch ( $method ) {
-      case 'global':
-        if( is_array($value) ) {
-          foreach( $value as $varname => $varprop ) {
-            global $$varname;
-            return $$varname->$varprop;
-          }
-        } else {
-          global $$value;
-          return $$value;
-        }
-    }
+/**
+ * transform a token of a particular type into its values
+ * @param $token of form
+ *   global: globalvarname: globalvarproperty OR
+ *           globalvarname
+ * @return token value if successful, null if unsuccessful
+ */
+function _y__token_data( array $token ) {
+  $value = reset( $token );
+  $method = key($token);
+  switch ( $method ) {
+    case 'global':
+      if (is_array($value)) {
+        $varprop = reset($value);
+        $varname = key($value);
+        global $$varname;
+        return $$varname->$varprop;
+      }
+      else {
+        global $$value;
+        return $$value;
+      }
   }
+
   return NULL;
 }
 
@@ -664,18 +753,18 @@ function y__q_datagetter( $datadef ) {
  * @param $var
  * @param $substarray
  */
-function _y_var_substitute( & $var, $substarray ) {
+function _y__var_substitute( & $var, $substarray ) {
   if( !is_array($var) ) {
     $var = strtr( $var, $substarray );
   } else {
     foreach( $var as & $value ) {
-      _y_var_substitute( $value, $substarray );
+      _y__var_substitute( $value, $substarray );
     }
   }
 }
 
 // Helper function to show a query string
-function y__get_query_string(SelectQueryInterface $query) {
+function _y__query_get_string(SelectQueryInterface $query) {
   $string = (string) $query;
   $arguments = $query->arguments();
 
@@ -697,7 +786,7 @@ function y__get_query_string(SelectQueryInterface $query) {
  * @param $config
  * @return array
  */
-function y__view_getquery( $config ) {
+function y__query_build( $config ) {
   if( empty($config['base table'])) {
     return array();
   }
@@ -705,7 +794,7 @@ function y__view_getquery( $config ) {
   $config += array( 'arguments' => array(), 'build' => array() );
   // Get data values
   foreach( $config['arguments'] as $name => &$value ) {
-    $value = y__q_datagetter( $value );
+    $value = _y__token_data( $value );
   }
 
   // Make the query
@@ -714,7 +803,7 @@ function y__view_getquery( $config ) {
   $query = db_select( $basetable, $basetablealias );
   foreach( $config['build'] as $querycfg ) {
     foreach( $querycfg as $db_op => $args ) {
-      _y_var_substitute($args, $config['arguments']);
+      _y__var_substitute($args, $config['arguments']);
       if ( in_array($db_op, array( 'addExpression',
         'addField',
         'addJoin',
@@ -736,23 +825,25 @@ function y__view_getquery( $config ) {
 /**
  * Execute a query and display and return results
  * @param $config array of query, arguments, and display
- *   base table:
- *     base_table_name: base_table_name_alias
- *   arguments:
- *     name_of_arg: definition_of_arg (see y__q_datagetter for how to define this
  *   query:
- *   - operation: arguments
- *     differentoperation: arguments
- *   - operation: morearguments...
+ *     base table:
+ *       base_table_name: base_table_name_alias
+ *     arguments:
+ *       name_of_arg: definition_of_arg (see y__q_datagetter for how to define this
+ *     query:
+ *     - operation: arguments
+ *       differentoperation: arguments
+ *     - operation: morearguments...
  *   display:
+ *     display callback: name of a function to process the results of the query
  * @return array
  */
-function y__view($config) {
+function y__db_query_display($config) {
 
-  if( empty($config['query']) || !($query = y__view_getquery($config['query']))) {
+  if( empty($config['query']) || !($query = y__query_build($config['query']))) {
     return array();
   }
-  $querystring = y__get_query_string($query);
+  $querystring = _y__query_get_string($query);
   $queryresult = $query->execute();
 
   // Return results or display output
