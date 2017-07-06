@@ -84,7 +84,7 @@ function y__field_delete($field_name) {
 function y__field_property_info_callback(&$info, $entity_type, $field, $instance, $field_type) {
   // $name = $field['field_name'];
   // $property = &$info[$entity_type]['bundles'][$instance['bundle']]['properties'][$name];
-  $property = y__protocol_field($field_type['module'], 'property_info');
+  $property = y__protocol('field', 'property_info', $field_type['module']);
   if( $field['cardinality'] !=  1 ) {
     $property['type'] = 'list<' . $property['type'] . '>';
   }
@@ -168,30 +168,25 @@ function y__instance_delete($instance) {
  * Create an instance of a field for a bundle. Quickly instantiate a field
  * instance and its associated field.
  */
-function y__instance_create($module, $instancename, $entity_type, $bundle, $info) { //, $label, $weight = 0, $units = array(), $display = array()) {
+function y__instance_create($instancedefiningmodule, $instancename, $entity_type, $bundle, $info) { //, $label, $weight = 0, $units = array(), $display = array()) {
   y__field_activate( $instancename );
-  $yinfo = y__info( $module, 'instance' );
   if( empty($info['definition']) || empty($yinfo[$info['definition']])) {
     watchdog('YAML', 'Invalid field instance definition specified [:fieldname]', array(':fieldname' => $instancename));
     return;
   }
-  $instancedef = $info['definition'];
-  $yinstance = $yinfo[$instancedef];
   field_cache_clear();
   $field = field_info_field($instancename);
   $existinginstance = field_info_instance($entity_type, $instancename, $bundle);
 
   if (empty($field)) {
-    $field = $yinstance['field'];
+    $field = y__protocol('instance', 'field', $instancedefiningmodule );
     $field['field_name'] = $instancename;
     field_create_field($field);
   }
 
   if (empty($existinginstance)) {
-    $fieldinfo = field_info_field_types($yinstance['field']['type']);
-
     $instance = $info['instance'] ?? array();
-    $instance += $yinstance['instance'];
+    $instance += y__protocol('instance', 'instance', $instancedefiningmodule);
     $instance['field_name'] = $instancename;
     $instance['bundle'] = $bundle;
     $instance['entity_type'] = $entity_type;
@@ -202,11 +197,11 @@ function y__instance_create($module, $instancename, $entity_type, $bundle, $info
       'default' => array(),
     );
     $weight = 0;
-    $display = array( 'label' => 'hidden', 'settings' => array(), 'weight' => 0 );
-
+    $display = array( 'label' => 'hidden', 'settings' => array() );
+    $displaydef = y__protocol('instance', 'display', $instancedefiningmodule);
     foreach ($entity_info['view modes'] as $view_mode => $data) {
-      $display = $yinstance['display'][$view_mode] ?? $display;
-      $instance['display'][$view_mode] = $display + array( 'weight' => $weight++ );
+      $instance['display'][$view_mode] = $displaydef[$view_mode] ?? array();
+      $instance['display'][$view_mode] += $display + array( 'weight' => $weight++ );
     }
     field_create_instance($instance);
   } else { // instance info exists, needs to be updated for bundle and entity

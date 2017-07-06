@@ -1,0 +1,22 @@
+<?php
+/**
+ * Created by: hugh
+ * Date: 7/3/17
+ * Time: 5:23 PM
+ */
+/**
+ * Implements hook_theme().
+ */
+function ylayout_theme($existing, $type, $theme, $path) {
+  $ret = y__protocol('layout', 'theme'); // returns hook_theme info for all active layout definitions
+  return $ret;
+}
+
+/**
+ * Implements hook_y()
+ * @return array
+ */
+function ylayout_y() {
+  return array( 'layout' );
+}
+

@@ -1,0 +1,5 @@
+name = YAML Layouts
+description = Display layouts
+package = Y
+version = VERSION
+core = 7.x
