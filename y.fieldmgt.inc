@@ -170,21 +170,22 @@ function y__instance_delete($instance) {
  */
 function y__instance_create($instancedefiningmodule, $instancename, $entity_type, $bundle, $info) { //, $label, $weight = 0, $units = array(), $display = array()) {
   y__field_activate( $instancename );
-  if( empty($info['definition']) || empty($yinfo[$info['definition']])) {
+  if( empty($info['definition']) ) { // || empty($yinfo[$info['definition']])) {
     watchdog('YAML', 'Invalid field instance definition specified [:fieldname]', array(':fieldname' => $instancename));
     return;
   }
   field_cache_clear();
   $field = field_info_field($instancename);
-  $existinginstance = field_info_instance($entity_type, $instancename, $bundle);
+  $instance = field_info_instance($entity_type, $instancename, $bundle);
 
   if (empty($field)) {
-    $field = y__protocol('instance', 'field', $instancedefiningmodule );
+    $fieldinfo = y__protocol('instance', 'field', $instancedefiningmodule);
+    $field = $fieldinfo[$info['definition']];
     $field['field_name'] = $instancename;
     field_create_field($field);
   }
 
-  if (empty($existinginstance)) {
+  if (empty($instance)) {
     $instance = $info['instance'] ?? array();
     $instance += y__protocol('instance', 'instance', $instancedefiningmodule);
     $instance['field_name'] = $instancename;

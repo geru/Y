@@ -64,13 +64,27 @@ function y__array_unflatten( array $array, $delim = ':') {
 /** Main YAML retrieval ************************************/
 
 /**
+ * Register a directory to load extra Y config information (not in default set of installed modules)
+ * Can be in a theme, library, or for hook_schema a recently uninstalled module
+ * @param array $extraconfiginfo
+ */
+function y__register_extra_config( array $extraconfiginfo ) {
+  $override = & drupal_static('y__extra_config', array());
+  foreach( $extraconfiginfo as $name => $configinfo ) {
+    if( !isset($override[$name]) ) {
+      $override[$name] = $configinfo + array('protocols implemented' => array(), 'path' => '.');
+      $override[$name]['path'] = rtrim($override[$name]['path'], "/\\") . '/' ;
+    }
+
+  }
+}
+
+/**
  * Fetch all of the information defined by the owning module according to the protocol
  * This is the meat of it all
  * @param null $owner
  * @param $protocol
  * @return array of protocol information keyed by module implementing protocol
- *
- * todo: add callback indexing and caching
  */
 function y__info( $protocol, $owner = NULL, $format='tree' ) {
   $modulesimplement = &drupal_static(__FUNCTION__ . ':modulesimplement', NULL);
@@ -81,65 +95,72 @@ function y__info( $protocol, $owner = NULL, $format='tree' ) {
   // An array keyed by modulename of the protocols implemented by the module
   // Eg. $protocolsimplemented['bc'] = array( 'hook', 'entity', 'bctype' );
 
+  $newinfo = FALSE; // semaphore to know when yinfo has new information to be cached.
   $yinfo = &drupal_static(__FUNCTION__, array());
   // A multi-dim array of the modules implementing protocols keyed by protocol and module
   // Eg. $yinfo[$protocol][$module] = array(... )
-
-  // Initialize self
-  if( $modulesimplement === NULL ) { // todo: getting burned by this logic if hook not declared by hook_y()
-    $modulesimplement = array();
-    // any time a new protocol is requested, something has changed, clear information and reload
-    //$modulesimplement = array();
-    // $modulesimplement[$protocol] = array();
-    // $protocolsimplemented = array();
+  $configinfo = & drupal_static('y__extra_config', array());
+  if( $modulesimplement === NULL ) {
+    foreach( module_implements('y') as $module ) {
+      if( !($path = drupal_get_path('module', $module)) ) {
+        $path = '.';
+      }
+      $configinfo[$module] = array(
+        'protocols implemented' => module_invoke($module, 'y'),
+        'path' => $path . '/'
+      );
+    }
   }
-  if( !isset($modulesimplement[$protocol]) || ($owner && !isset($protocolsimplemented[$owner])) ) {
-    $modules = module_implements('y');
-    foreach ($modules as $module) {
-      $protocolsimplemented[$module] = module_invoke($module, 'y');
-      foreach ($protocolsimplemented[$module] as $p) {
-        if (!isset($modulesimplement[$p])) {
-          $modulesimplement[$p] = array();
+  foreach ($configinfo as $module => $info ) {
+    $protocols = $info['protocols implemented'];
+    $protocolsimplemented[$module] = $protocols;
+    foreach( $protocols as $p ) {
+      if( isset($modulesimplement[$p]) ) {
+        if( !in_array($module, $modulesimplement[$p])) {
+          $modulesimplement[$p][] = $module;
         }
-        $modulesimplement[$p][] = $module;
-        if (!isset($yinfo[$p])) {
-          $yinfo[$p] = array();
-        }
+      } else {
+        $modulesimplement[$p] = array( $module );
       }
     }
   }
-  $modules = $owner
-    ? array($owner)
-    : $modulesimplement[$protocol] ?? array();
+  if( $owner ) {
+    if( !isset($protocolsimplemented[$owner]) ) {
+      $warning = t('Protocol !protocol requested  of module !module that provides none.', array(
+        '!protocol' => $protocol, '!module' => $owner
+      ));
+    } else {
+      if( !in_array($protocol, $protocolsimplemented[$owner]) ) {
+        $warning = t('Protocol !protocol requested  of module !module that does not support it.', array(
+          '!protocol' => $protocol, '!module' => $owner
+        ));
+      }
+    }
+  }
+  if( !isset($modulesimplement[$protocol]) ) {
+    return array();
+  }
+  if( isset($warning) ) {
+    watchdog('Y', $warning);
+    drupal_set_message('Y: ' . $warning, 'error');
+    return array();
+  }
+  $modules = $owner ? array($owner) : $modulesimplement[$protocol];
   if( !$modules ) {
     return( array() );
   }
-  //    $warning = t( 'Undeclared protocol !protocol requested. Owner: !owner.', array('!protocol' => $protocol, '!owner' => $owner));
-  //    watchdog('Y', $warning);
-  //    drupal_set_message('Y: ' . $warning, 'error');
-  $backdoor = & drupal_static('y__backdoor_for_uninstall');
-  if( $owner && !$backdoor ) {
-    if (!isset($protocolsimplemented[$owner])) { // This happens for hook_schema... trouble
-        return array();
-    } else {
-      if (!in_array($protocol, $protocolsimplemented[$owner])) {
-        $warning = t('Protocol !protocol requested  of module !module that does not support it.', array(
-          '!protocol' => $protocol,
-          '!module' => $owner
-        ));
-        watchdog('Y', $warning);
-        drupal_set_message('Y: ' . $warning, 'error');
-      }
+
+  $y_cache_flag = variable_get('y_cache_flag', TRUE);
+  if( !$yinfo ) {
+    if( $y_cache_flag && ($cache = cache_get(__FUNCTION__))) {
+      $yinfo = $cache->data;
     }
-  }
-  if( isset($warning) ) {
-    return array();
   }
 
   if( $owner && isset($yinfo[$protocol][$owner]) ) {
     return $format ? $yinfo[$protocol][$owner][$format] : $yinfo[$protocol][$owner];
   }
-
+  
   foreach( $modules as $module ) {
     $callbacks = array(
       '!t' => 'y__yaml_callback_t',
@@ -154,11 +175,12 @@ function y__info( $protocol, $owner = NULL, $format='tree' ) {
       '!menucallback' => 'y__yaml_callback_plugin_menucallback',
       '!callback' => 'y__yaml_callback_plugin_callback',
       '!protocol' => 'y__yaml_callback_plugin_protocol',
+      '!modulepath' => 'y__yaml_callback_plugin_modulepath',
       '!eval' => 'y__yaml_callback_eval',
     );
     // get config path for the module
     if( !isset($yinfo['_config'][$module] ) ) {
-      $modulepath = ($backdoor ?? drupal_get_path('module', $module)) . '/';
+      $modulepath = $configinfo[$module]['path'];
       foreach( array($modulepath => $module . '.yaml', $modulepath . 'config/' => '_config.yaml') as $path => $filename ) {
         if (file_exists($path . $filename) ) {
           $filebase = pathinfo($filename, PATHINFO_FILENAME);
@@ -184,7 +206,8 @@ function y__info( $protocol, $owner = NULL, $format='tree' ) {
           _y__stack_pop('y__yaml_plugin_values');
         }
       }
-      $yinfo['_config'][$module] = $_config ?? array('path' => $modulepath . 'config/');
+      $yinfo['_config'][$module] = $_config ?? array('path' => $path);
+      $newinfo = TRUE;
     }
     if (!isset($yinfo[$protocol][$module]) ) {
       $conf = $yinfo['_config'][$module];
@@ -218,6 +241,7 @@ function y__info( $protocol, $owner = NULL, $format='tree' ) {
         ? array( 'tree' => $protocolinfo,
                  'flat' => y__array_flatten($protocolinfo) )
         : array( 'tree' => array(), 'flat' => array() );
+      $newinfo = TRUE;
 
       foreach (file_scan_directory($conf['path'] . $protocol, '|.*\.y.?ml|') as $file) {
         if( $path = dirname($file->uri) ) { $path .= '/'; }
@@ -233,6 +257,7 @@ function y__info( $protocol, $owner = NULL, $format='tree' ) {
             'filename' => $file->filename // 'bctype.yaml'
          ) );
         if (($info = yaml_parse_file($file->uri, 0, $n, $callbacks)) !== FALSE) {
+          $newinfo = TRUE;
           $yinfo[$protocol][$module] = array(
             'tree' => array_merge($yinfo[$protocol][$module]['tree'], $info ),
             'flat' => array_merge($yinfo[$protocol][$module]['flat'], y__array_flatten($info) ) );
@@ -241,6 +266,12 @@ function y__info( $protocol, $owner = NULL, $format='tree' ) {
         }
         _y__stack_pop('y__yaml_plugin_values');
       }
+    }
+  }
+  if( $newinfo ) {
+    drupal_alter('yinfo', $yinfo);
+    if( $y_cache_flag ) {
+      cache_set(__FUNCTION__, $yinfo);
     }
   }
   if( $owner ) {
@@ -366,14 +397,6 @@ function y__protocol_get_all( $protocols, $api, $module, $squishiness=0 ) {
     }
   }
   return $ret;
-}
-
-/**
- * @param string $path path to module, provides backdoor when uninstalling
- */
-function y__modulepath_set_override( string $path ) {
-  $modulepath = & drupal_static('y__backdoor_for_uninstall');
-  $modulepath = $path;
 }
 
 /**
@@ -571,7 +594,7 @@ function _y__display_tokenreplace($variable, $tokens) {
  * @param null $render // settings to initialize output
  * @return array|null  // table render array
  */
-function y__display_table( $resultset,  $render=NULL ) {
+function y__display_table( $resultset, $rowaccess, $colaccess, $render=NULL ) {
   if( !$render ) {
     $render = array(
                 'querytable' => array(
@@ -608,6 +631,69 @@ function y__display_table( $resultset,  $render=NULL ) {
       '#rows' => $rows,
     )
   );
+  return $render;
+}
+
+/**
+ * Build an array of tokens in form token=>'[token]' for substitution-handling
+ * @param array $tokens
+ * @return array
+ */
+function y__token_build_list( array $tokens ) {
+  $ret = array();
+  foreach( $tokens as $token ) {
+    $ret[$token] = '[' . $token . ']';
+  }
+  return $ret;
+}
+
+/**
+ * Display a query result set as a table using the given render rules
+ * @param $resultset   // stuff to display, array of arrays or objects
+ * @param null $render // settings to initialize output
+ * @return array|null  // table render array
+ */
+function y__display_queryresults_inline( $resultset, $config ) {
+  $solo = (array) reset($resultset);
+  $tokens = y__token_build_list(array_keys($solo));
+  $config += array( 'render' => array(), 'rowaccess' => array(), 'colaccess' => array() );
+  $rowaccess = $config['rowaccess'];
+  $colaccess = $config['colaccess'];
+  $render = $config['render'];
+  $row_def = $config['render']['rows'] ?? array_keys($tokens);
+  $rows = array();
+
+  foreach( $resultset as $result ) {
+    $result = (array)$result;
+    $substitution = array_combine($tokens,array_values($result));
+    if( isset($rowaccess['callback']) ) {
+      $args = array( $result ) + $rowaccess['arguments'] ?? array();
+      if( !call_user_func_array($rowaccess['callback'], $args) ) {
+        continue;
+      }
+    }
+    $defined_row = $row_def;
+    $row = _y__var_substitute($defined_row, $substitution);
+    if( isset($colaccess['callback']) ) {
+      if( $function = y__plugin($colaccess, 'callback') ) {
+        $args = array( $row_def, $row );
+        if( !empty($colaccess['arguments'])) {
+          $args = array_merge($args, $colaccess['arguments']);
+        }
+        $row = call_user_func_array($function, $args);
+      }
+    }
+    $rows[] = $row;
+  }
+  $header_def = $render['header'] ?? array();
+      // '#theme' => 'fieldset',
+      // '#empty' => t('No results'), );
+  $footer_def = $render['footer'] ?? array();
+  if( isset($substitution)) {
+    $header_def = _y__var_substitute($header_def, $substitution);
+    $footer_def = _y__var_substitute($footer_def, $substitution);
+  }
+  $render = array( 'header' => $header_def, 'rows' => $rows, 'footer' => $footer_def );
   return $render;
 }
 
@@ -748,13 +834,14 @@ function y__db_query_display($config) {
 
     // Return results or display output
     if ($displayfunction = y__plugin($config, 'display', 'callback')) {
-      $ret[] = call_user_func_array($displayfunction, array(
+      $render = call_user_func_array($displayfunction, array(
         $queryresult,
-        $config['display']['arguments'] ?? NULL
-      )); // todo: rework callback
+        $config['display'] ?? array()
+      ));
+      $ret = array_merge($ret, $render);
     }
     else {
-      $ret[] = $queryresult->fetchAllKeyed();
+      $ret = array_merge($ret, $queryresult);
     }
   }
 
@@ -806,4 +893,30 @@ function y__page_display($id, $module=NULL) {
     $ret[$key] = _y__page_render($pagedef, $context);
   }
   return $ret;
+}
+
+/**
+ * Implements hook_menu().
+ */
+function y_menu() {
+  return array(
+    'admin/config/development/y' => array(
+      'title' => 'YAML configuration',
+      'description' => 'Configure YAML configuration',
+      'page callback' => 'drupal_get_form',
+      'page arguments' => array( 'y__config_form' ),
+      'access arguments' => array( 'administer site configuration' ),
+    )
+  );
+}
+
+function y__config_form($form, &$form_state) {
+  $form['y_cache_flag'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('YAML Configuration caching'),
+    '#default_value' => variable_get('y_cache_flag', TRUE),
+    '#description' => t('Turn YAML configuration caching on and off.')
+  );
+
+  return system_settings_form($form);
 }

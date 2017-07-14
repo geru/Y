@@ -3,3 +3,5 @@ description = Configure Drupal through YAML files
 package = Y
 version = VERSION
 core = 7.x
+
+configure = admin/config/development/y

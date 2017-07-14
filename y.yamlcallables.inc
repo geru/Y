@@ -94,6 +94,17 @@ function y__yaml_callback_plugin_local( $values, $tag, $flags ) {
   return $ret;
 }
 
+function y__yaml_callback_plugin_modulepath( $value, $tag, $flags ) {
+  // $plugin = & drupal_static('y__yaml_plugin_values', array());
+  $params = _y__stack_peek('y__yaml_plugin_values');
+  $module = $params['module'];
+  $modulepath = drupal_get_path('module', $module);
+  if( $value ){
+    $modulepath .= '/' . $value;
+  }
+  return $modulepath;
+}
+
 function y__yaml_callback_eval( $value, $tag, $flags ) {
   $ret = array();
   if( !is_array($value) ) {
@@ -185,8 +196,12 @@ function y__yaml_callback_plugin_set( $value, $tag, $flags ) {
 function y__yaml_callback_plugin_menucallback( $value, $tag, $flags ) {
   $plugin = _y__stack_peek('y__yaml_plugin_values');
   $includefilearray = array(  'file' => $plugin['file'],
-    'file path' => $plugin['path'] );
-  $ret = $value + $includefilearray;
+    'file path' => trim($plugin['path'], "/\\") );
+  if( !$value || !is_array($value) ) {
+    $ret = $includefilearray;
+  } else {
+    $ret = $value + $includefilearray;
+  }
   return $ret;
 }
 
