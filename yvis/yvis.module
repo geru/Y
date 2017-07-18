@@ -7,7 +7,7 @@
 /**
  * Implements hook_theme().
  */
-function ylayout_theme($existing, $type, $theme, $path) {
+function yvis_theme($existing, $type, $theme, $path) {
   $ret = y__protocol('layout', 'theme'); // returns hook_theme info for all active layout definitions
   return $ret;
 }
@@ -16,7 +16,7 @@ function ylayout_theme($existing, $type, $theme, $path) {
  * Implements hook_y()
  * @return array
  */
-function ylayout_y() {
+function yvis_y() {
   return array( 'layout' );
 }
 

@@ -371,8 +371,9 @@ function y__build_branch( $module, $protocol, $pattern, &$info=NULL ) {
 /**
  * Iterate through a set of protocols and get an array of all the api information in them.
  * @param array $protocols
- * @param $module
  * @param $api
+ * @param $module
+ * @param squishiness
  * @return array
  */
 function y__protocol_get_all( $protocols, $api, $module, $squishiness=0 ) {
@@ -384,7 +385,7 @@ function y__protocol_get_all( $protocols, $api, $module, $squishiness=0 ) {
     $yinfo = y__protocol( $protocol, $api, $module );
     $ret += $yinfo;
   }
-  if( $squishiness ) {
+  if( $squishiness ) { // squishiness does a quick union of subarrays
     if( $squishiness > 0 ) {
       while( $squishiness-- ) {
         foreach( $ret as $key => $value) {
@@ -469,6 +470,11 @@ function y__protocol(string $protocol, string $api, $module=NULL, array &$info=N
 
 /**
  * Implements hook_entity_property_info_alter().
+ * This may or may not be a good idea...
+ * It is a demonstration of how y can automatically implement hooks for subscribing modules.
+ * In this case, y will implement hook_entity_property_info_alter() for any module
+ * implementing an entity using y -- one less hook to implement.
+ * It would be quite easy to do this with MANY superfluous hooks.
  */
 function y_entity_property_info_alter(&$info) {
   y__protocol('entity', 'property info alter', NULL, $info );
@@ -515,7 +521,12 @@ function y__plugin( array $info, string $type, string $callbackname, $default=''
 
 /**
  * Implements hook_init() and instantiates all Drupal hooks defined with the "hook" protocol
-
+ * Another demonstration of how y can implement hooks for subscribing functions, it can do
+ * hook_menu, hook_permission, and even do them dynamically, implementing the hooks as they are
+ * discovered.
+ * This is probably a really, super, bad idea and that's why it's commented, but it's pretty
+ * cool. If y were incorporated into core, these sorts of things could happen automatically
+ * at that level.
 function _y_init() {
   // Instantiate YAML-defined local hooks
   if ( ($hookfunctiondefs = cache_get(__FUNCTION__)) === FALSE) {
@@ -566,7 +577,11 @@ function y__display_array($table) {
  */
 function _y__var_substitute( & $var, $substarray ) {
   if( !is_array($var) ) {
-    $var = strtr( $var, $substarray );
+    if( in_array($var, array_keys($substarray), TRUE) ) {
+      $var = $substarray[$var];
+    } elseif( is_string($var) ) {
+      $var = strtr( $var, $substarray );
+    }
   } else {
     foreach( $var as & $value ) {
       _y__var_substitute( $value, $substarray );
@@ -574,19 +589,6 @@ function _y__var_substitute( & $var, $substarray ) {
   }
   return $var;
 }
-
-/*
-function _y__display_tokenreplace($variable, $tokens) {
-  if( is_array($variable) ) {
-    foreach ($variable as $key => & $value) {
-      $value = _y__display_tokenreplace($value, $tokens);
-    }
-  } else {
-    $variable = strtr( $variable, $tokens );
-  }
-  return $variable;
-}
-*/
 
 /**
  * Display a query result set as a table using the given render rules
@@ -698,6 +700,62 @@ function y__display_queryresults_inline( $resultset, $config ) {
 }
 
 /**
+ * Display a query result set as a table using the given render rules
+ * @param $resultset   // stuff to display, array of arrays or objects
+ * @param null $render // settings to initialize output
+ * @return array|null  // table render array
+ */
+function y__display_queryresults( $resultset, $config ) {
+  $solo = (array) reset($resultset);
+  $tokens = y__token_build_list(array_keys($solo));
+  $context = $config['protocol']['context'] ?? array();
+  $config +=  array(
+    'rowaccess' => array(),
+    'colaccess' => array() );
+  $rowaccess = $config['rowaccess'];
+  $colaccess = $config['colaccess'];
+
+  $row_def = $config['render']['iterate'] ?? array_values( $tokens );
+  $rows = array();
+
+  foreach( $resultset as $result ) {
+    $result = (array)$result;
+    $substitution = array_combine($tokens,array_values($result)) + $context;
+    if( isset($rowaccess['callback']) ) {
+      $args = array( $result ) + $rowaccess['arguments'] ?? array();
+      if( !call_user_func_array($rowaccess['callback'], $args) ) {
+        continue;
+      }
+    }
+    $defined_row = $row_def;
+    $row = _y__var_substitute($defined_row, $substitution);
+//    if( isset($colaccess['callback']) ) {
+//      if( $function = y__plugin($colaccess, 'callback') ) {
+//        $args = array( $row_def, $row );
+//        if( !empty($colaccess['arguments'])) {
+//          $args = array_merge($args, $colaccess['arguments']);
+//        }
+//        $row = call_user_func_array($function, $args);
+//      }
+//    }
+    $rows[] = $row;
+  }
+  if( !isset($substitution) ) {
+    $substitution = $context;
+  }
+  $substitution['[@iteration]'] = $rows;
+  $substitution['[@keys]'] = array_keys($solo);
+  $substitution['[@values]'] = array_values($solo);
+  $substitution = array_merge($substitution, $context);
+
+  $render = $config['render']['content'] ?? array( 
+      "#theme" => 'table', "#empty" => t('No results'),
+      "#header" => '[@keys]', '#rows' => '[@iteration]');
+  $render = _y__var_substitute($render, $substitution );
+  return $render;
+}
+
+/**
  * transform a token of a particular type into its values
  * @param $token of form
  *   global: globalvarname: globalvarproperty OR
@@ -708,7 +766,10 @@ function _y__token_data( array $token ) {
   $value = reset( $token );
   $method = key($token);
   switch ( $method ) {
-    case 'global':
+    case 'arg': // return a value at a numerical index into a context array
+      $args = & drupal_static(__FUNCTION__, array());
+      return $args[$value];
+    case 'global': // return a global variable value
       if (is_array($value)) {
         $varprop = reset($value);
         $varname = key($value);
@@ -720,10 +781,10 @@ function _y__token_data( array $token ) {
         return $$value;
       }
       break;
-    case 'session':
+    case 'session': // return a session variable value
       return $_SESSION[$value];
       break;
-    case 'callback':
+    case 'callback': // return the result of a callback
       if( is_array($value) ) {
         $name = key($value);
         if( is_integer($name) ) {
@@ -776,8 +837,9 @@ function y__query_build( $config ) {
 
   $config += array( 'arguments' => array(), 'build' => array() );
   // Get data values
-  foreach( $config['arguments'] as $name => &$value ) {
-    $value = _y__token_data( $value );
+  $substitution = $config['protocol']['context'] ?? array();
+  foreach( $config['arguments'] as $name => $value ) {
+    $substitution[$name] = _y__token_data( $value );
   }
 
   // Make the query
@@ -786,7 +848,7 @@ function y__query_build( $config ) {
   $query = db_select( $basetable, $basetablealias );
   foreach( $config['build'] as $querycfg ) {
     foreach( $querycfg as $db_op => $args ) {
-      _y__var_substitute($args, $config['arguments']);
+      _y__var_substitute($args, $substitution);
       if ( in_array($db_op, array( 'addExpression',
         'addField',
         'addJoin',
@@ -821,11 +883,16 @@ function y__query_build( $config ) {
  *     display callback: name of a function to process the results of the query
  * @return array
  */
-function y__db_query_display($config) {
+function y__views() {
   $args = func_get_args();
   $ret = array();
-  
-  foreach ($args as $config) {
+  $views = array_shift($args);
+  if( !is_array($views) ) {
+    $views = array( $views );
+  }
+  drupal_static('_y__token_data', $args, TRUE);
+
+  foreach ($views as $config) {
     if (empty($config['query']) || !($query = y__query_build($config['query']))) {
       return array();
     }
@@ -833,16 +900,14 @@ function y__db_query_display($config) {
     $queryresult = $query->execute()->fetchAll();
 
     // Return results or display output
-    if ($displayfunction = y__plugin($config, 'display', 'callback')) {
-      $render = call_user_func_array($displayfunction, array(
-        $queryresult,
-        $config['display'] ?? array()
-      ));
-      $ret = array_merge($ret, $render);
+    if (!($displayfunction = y__plugin($config, 'display', 'callback'))) {
+      $displayfunction = 'y__display_queryresults';
     }
-    else {
-      $ret = array_merge($ret, $queryresult);
-    }
+    $render = call_user_func_array($displayfunction, array(
+      $queryresult,
+      $config['display'] ?? array()
+    ));
+    $ret[] = $render;
   }
 
   if( (count($ret) == 1) && is_integer($key = key($ret)) ) {
@@ -865,6 +930,7 @@ function _y__page_render($renderinfo, & $context) {
       $ret[$key] = _y__page_render( $value, $context );
     } else {
       switch ($key) {
+        case 'protocol': break;
         case 'function':
           if (isset($renderinfo['uri'])) {
             include_once $renderinfo['uri'];
@@ -919,4 +985,42 @@ function y__config_form($form, &$form_state) {
   );
 
   return system_settings_form($form);
+}
+
+function y__emit($elements) {
+  if( FALSE ) { // hooked in at drupal_render, just set true to start emitting stuff
+    if (!$elements) {
+      return;
+    }
+    $index = variable_get('yaml_render', 1);
+    $type = '';
+    if (isset($elements['#type'])) {
+      $type = 'type_' . $elements['#type'];
+    }
+    else {
+      if (isset($elements['#theme'])) {
+        $type = 'theme_';
+        if (is_array($elements['#theme'])) {
+          $type .= implode('_', $elements['#theme']);
+        }
+        else {
+          $type .= $elements['#theme'];
+        }
+      }
+      else {
+        if (isset($elements['#theme_wrappers'])) {
+          $type = 'wrap_';
+          if (is_array($elements['#theme_wrappers'])) {
+            $type .= implode('_', $elements['#theme_wrappers']);
+          }
+          else {
+            $type .= $elements['#theme_wrappers'];
+          }
+        }
+      }
+    }
+
+    yaml_emit_file('yaml/' . str_pad($index, 4, '0', STR_PAD_LEFT) . '_' . $type . '.yaml', $elements);
+    variable_set('yaml_render', ++$index);
+  }
 }

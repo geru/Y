@@ -230,9 +230,22 @@ function y__yaml_callback_plugin_callback( $value, $tag, $flags ) {
 function y__yaml_callback_plugin_protocol( $value, $tag, $flags ) {
   // $plugin = & drupal_static('y__yaml_plugin_values', array());
   $plugin = _y__stack_peek('y__yaml_plugin_values');
+  if( !is_array($value) ) {
+    $value = array( $value => array() );
+  }
+  if( count($value) == 1 ) {
+    $shorthand = array('target', 'id', 'api', 'module');
+    $params = array();
+    foreach( explode('/', key($value)) as $index => $shortval ) {
+      $params[$shorthand[$index]] = $shortval;
+    }
+    $params['context'] = reset($value);
+    $value = $params;
+  }
   $params = $value + $plugin;
   $yinfo = y__protocol( $params['target'], $params['api'], $params['module'] );
   $ret = $yinfo[$params['id']] ?? array();
+  $ret['protocol'] = $value; // save original protocol request info with result
   return $ret;
 }
 
