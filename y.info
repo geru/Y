@@ -3,5 +3,7 @@ description = Configure Drupal through YAML files
 package = Y
 version = VERSION
 core = 7.x
+backdrop = 1.x  ; these two added for Backdrop compatibility
+type = module   ;   "    "    "    "     "         "
 
 configure = admin/config/development/y

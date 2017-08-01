@@ -1,7 +1,0 @@
-name = YAML Visual
-description = Display layouts, themes, elements, and more
-package = Y
-version = VERSION
-core = 7.x
-
-dependencies[] = y

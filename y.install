@@ -7,7 +7,7 @@ function y_requirements($phase) {
 
   if ($phase == 'install') {
     // Ensure translations do not break at install time
-    if( PHP_MAJOR_VERSION < 7 ) {
+    if (PHP_MAJOR_VERSION < 7) {
       $t = get_t();
       $requirements['PHP']['title'] = $t('PHP');
       $requirements['PHP']['severity'] = REQUIREMENT_ERROR;

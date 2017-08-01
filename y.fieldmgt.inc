@@ -41,8 +41,8 @@ function y__field_activate($field_name) {
  *   The type of fields to enable and delete.
  */
 function y__field_delete_multiple($type, $bundle = NULL) {
-  $fields_to_delete = array( 'type' => $type );
-  if( $bundle ) {
+  $fields_to_delete = array('type' => $type);
+  if ($bundle) {
     $fields_to_delete['bundle'] = $bundle;
   }
   // Read the fields for any active or inactive field of the specified type.
@@ -85,7 +85,7 @@ function y__field_property_info_callback(&$info, $entity_type, $field, $instance
   // $name = $field['field_name'];
   // $property = &$info[$entity_type]['bundles'][$instance['bundle']]['properties'][$name];
   $property = y__protocol('field', 'property_info', $field_type['module']);
-  if( $field['cardinality'] !=  1 ) {
+  if ($field['cardinality'] != 1) {
     $property['type'] = 'list<' . $property['type'] . '>';
   }
 
@@ -169,8 +169,8 @@ function y__instance_delete($instance) {
  * instance and its associated field.
  */
 function y__instance_create($instancedefiningmodule, $instancename, $entity_type, $bundle, $info) { //, $label, $weight = 0, $units = array(), $display = array()) {
-  y__field_activate( $instancename );
-  if( empty($info['definition']) ) { // || empty($yinfo[$info['definition']])) {
+  y__field_activate($instancename);
+  if (empty($info['definition'])) { // || empty($yinfo[$info['definition']])) {
     watchdog('YAML', 'Invalid field instance definition specified [:fieldname]', array(':fieldname' => $instancename));
     return;
   }
@@ -198,29 +198,54 @@ function y__instance_create($instancedefiningmodule, $instancename, $entity_type
       'default' => array(),
     );
     $weight = 0;
-    $display = array( 'label' => 'hidden', 'settings' => array() );
+    $display = array('label' => 'hidden', 'settings' => array());
     $displaydef = y__protocol('instance', 'display', $instancedefiningmodule);
     foreach ($entity_info['view modes'] as $view_mode => $data) {
       $instance['display'][$view_mode] = $displaydef[$view_mode] ?? array();
-      $instance['display'][$view_mode] += $display + array( 'weight' => $weight++ );
+      $instance['display'][$view_mode] += $display + array('weight' => $weight++);
     }
     field_create_instance($instance);
-  } else { // instance info exists, needs to be updated for bundle and entity
+  }
+  else { // instance info exists, needs to be updated for bundle and entity
     $change = FALSE;
-    foreach( array('entity_type' => $entity_type, 'bundle' => $bundle) as $instancefield => $instanceinfo ) {
+    $existinginstance = $instance;
+    foreach (array(
+               'entity_type' => $entity_type,
+               'bundle' => $bundle
+             ) as $instancefield => $instanceinfo) {
       if (!is_array($existinginstance[$instancefield])) {
-        $existinginstance[$instancefield] = array( $existinginstance[$instancefield] );
+        $existinginstance[$instancefield] = array($existinginstance[$instancefield]);
         $change = TRUE;
-      } else {
-        if( $existinginstance[$instancefield] ) {
+      }
+      else {
+        if ($existinginstance[$instancefield]) {
           $existinginstance[$instancefield][] += is_array($instanceinfo) ? $instanceinfo : array($instanceinfo);
           $change = TRUE;
         }
       }
     }
-    if( $change ) {
+    if ($change) {
       _field_write_instance($existinginstance, TRUE);
     }
   }
 }
 
+/**
+ * Create instances from definitions in a protocol
+ * @param $protocol
+ * @param $requestingmodule
+ */
+function y__instance_create_defaults($protocol, $requestingmodule) {
+  $bundleinfo = y__protocol($protocol, 'bundle', $requestingmodule);
+  foreach (y__protocol($protocol, 'fields', $requestingmodule) as $bundle => $fields) {
+    foreach ($fields as $fieldname => $fieldinfo) {
+      $instancedefiningmodule = $fieldinfo['instance defining module'] ?? ($bundleinfo[$bundle]['module'] ?? $requestingmodule);
+      $targetentity = $fieldinfo['target entity'] ?? ($bundleinfo[$bundle]['entity'] ?? '');
+      if (!$targetentity) {
+        drupal_set_message('No target entity defined for instance ' . $requestingmodule . ':' . $fieldname);
+        continue;
+      }
+      y__instance_create($instancedefiningmodule, $fieldname, $targetentity, $bundle, $fieldinfo);
+    }
+  }
+}

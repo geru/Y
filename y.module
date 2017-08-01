@@ -3,38 +3,64 @@
 // include field management functionality
 require_once 'y.fieldmgt.inc';
 
+// include entity management functionality
+require_once 'y.entitymgt.inc';
+
 // include YAML callback functions
 require_once 'y.yamlcallables.inc';
+
+// include YAML display and query and page functionality
+require_once 'y.displaymgt.inc';
 
 /**
  * Implements hook_hook_info().
  */
 function y_hook_info() {
-  return array( 'y' => array( 'group' => 'y') );
+  return array('y' => array('group' => 'y'));
+}
+
+/**
+ * Implements hook_y()
+ * @return array
+ */
+function y_y() {
+  return array('layout', 'theme', 'systemform');
+}
+
+/**
+ * Implements hook_theme().
+ */
+function y_theme($existing, $type, $theme, $path) {
+  $ret = y__protocol_get_all(array(
+    'layout',
+    'theme'
+  ), 'theme', 'y'); // returns hook_theme info for all theme definitions
+  return $ret;
 }
 
 /** Array flattening / unflattening ************************/
 
 /**
  * Flatten an array to one-dimensional with keys imploded with delimiter
- * @param array $array   // array to be flattened
+ * @param array $array // array to be flattened
  * @param string $prefix // current prefix for key
- * @param string $delim  // glue delimiter for key
- * @param null $ret      // array to put result in
+ * @param string $delim // glue delimiter for key
+ * @param null $ret // array to put result in
  * @return array|null    // returns current level of array
  */
-function y__array_flatten( array $array, $prefix='', $delim = ':', &$ret=NULL ) {
-  if( $ret === NULL ) {
+function y__array_flatten(array $array, $prefix = '', $delim = ':', &$ret = NULL) {
+  if ($ret === NULL) {
     $ret = array();
   }
-  foreach( $array as $key => $value ){
-    if( is_array($value) && $value ) {
-      y__array_flatten( $value, $prefix . $key . $delim, $delim, $ret );
-    } else {
-      $ret[ $prefix . $key ] = $value;
+  foreach ($array as $key => $value) {
+    if (is_array($value) && $value) {
+      y__array_flatten($value, $prefix . $key . $delim, $delim, $ret);
+    }
+    else {
+      $ret[$prefix . $key] = $value;
     }
   }
-  return( $ret );
+  return ($ret);
 }
 
 /**
@@ -43,14 +69,14 @@ function y__array_flatten( array $array, $prefix='', $delim = ':', &$ret=NULL ) 
  * @param $array / one-dimensional
  * @param string $glue
  */
-function y__array_unflatten( array $array, $delim = ':') {
+function y__array_unflatten(array $array, $delim = ':') {
   $ret = array();
-  foreach($array as $key => $value) {
+  foreach ($array as $key => $value) {
     $workret = &$ret;
-    $deepkeys = explode( $delim, $key );
+    $deepkeys = explode($delim, $key);
     $finalkey = array_shift($deepkeys);
-    foreach( $deepkeys as $curkey ) {
-      if( !isset($workret[$finalkey] ) ) {
+    foreach ($deepkeys as $curkey) {
+      if (!isset($workret[$finalkey])) {
         $workret[$finalkey] = array();
       }
       $workret = &$workret[$finalkey];
@@ -68,14 +94,16 @@ function y__array_unflatten( array $array, $delim = ':') {
  * Can be in a theme, library, or for hook_schema a recently uninstalled module
  * @param array $extraconfiginfo
  */
-function y__register_extra_config( array $extraconfiginfo ) {
-  $override = & drupal_static('y__extra_config', array());
-  foreach( $extraconfiginfo as $name => $configinfo ) {
-    if( !isset($override[$name]) ) {
-      $override[$name] = $configinfo + array('protocols implemented' => array(), 'path' => '.');
-      $override[$name]['path'] = rtrim($override[$name]['path'], "/\\") . '/' ;
+function y__register_extra_config(array $extraconfiginfo) {
+  $override = &drupal_static('y__extra_config', array());
+  foreach ($extraconfiginfo as $name => $configinfo) {
+    if (!isset($override[$name])) {
+      $override[$name] = $configinfo + array(
+          'protocols implemented' => array(),
+          'path' => '.'
+        );
+      $override[$name]['path'] = rtrim($override[$name]['path'], "/\\") . '/';
     }
-
   }
 }
 
@@ -86,7 +114,7 @@ function y__register_extra_config( array $extraconfiginfo ) {
  * @param $protocol
  * @return array of protocol information keyed by module implementing protocol
  */
-function y__info( $protocol, $owner = NULL, $format='tree' ) {
+function y__info($protocol, $owner = NULL, $format = 'tree') {
   $modulesimplement = &drupal_static(__FUNCTION__ . ':modulesimplement', NULL);
   // An array keyed by protocol of the modules implementing the protocol
   // Eg. $modulesimplement['hook'] = array( 'bc', 'bcfeeds' )
@@ -99,10 +127,10 @@ function y__info( $protocol, $owner = NULL, $format='tree' ) {
   $yinfo = &drupal_static(__FUNCTION__, array());
   // A multi-dim array of the modules implementing protocols keyed by protocol and module
   // Eg. $yinfo[$protocol][$module] = array(... )
-  $configinfo = & drupal_static('y__extra_config', array());
-  if( $modulesimplement === NULL ) {
-    foreach( module_implements('y') as $module ) {
-      if( !($path = drupal_get_path('module', $module)) ) {
+  $configinfo = &drupal_static('y__extra_config', array());
+  if ($modulesimplement === NULL) {
+    foreach (module_implements('y') as $module) {
+      if (!($path = drupal_get_path('module', $module))) {
         $path = '.';
       }
       $configinfo[$module] = array(
@@ -111,91 +139,101 @@ function y__info( $protocol, $owner = NULL, $format='tree' ) {
       );
     }
   }
-  foreach ($configinfo as $module => $info ) {
+  foreach ($configinfo as $module => $info) {
     $protocols = $info['protocols implemented'];
     $protocolsimplemented[$module] = $protocols;
-    foreach( $protocols as $p ) {
-      if( isset($modulesimplement[$p]) ) {
-        if( !in_array($module, $modulesimplement[$p])) {
+    foreach ($protocols as $p) {
+      if (isset($modulesimplement[$p])) {
+        if (!in_array($module, $modulesimplement[$p])) {
           $modulesimplement[$p][] = $module;
         }
-      } else {
-        $modulesimplement[$p] = array( $module );
+      }
+      else {
+        $modulesimplement[$p] = array($module);
       }
     }
   }
-  if( $owner ) {
-    if( !isset($protocolsimplemented[$owner]) ) {
+  if ($owner) {
+    if (!isset($protocolsimplemented[$owner])) {
       $warning = t('Protocol !protocol requested  of module !module that provides none.', array(
-        '!protocol' => $protocol, '!module' => $owner
+        '!protocol' => $protocol,
+        '!module' => $owner
       ));
-    } else {
-      if( !in_array($protocol, $protocolsimplemented[$owner]) ) {
+    }
+    else {
+      if (!in_array($protocol, $protocolsimplemented[$owner])) {
         $warning = t('Protocol !protocol requested  of module !module that does not support it.', array(
-          '!protocol' => $protocol, '!module' => $owner
+          '!protocol' => $protocol,
+          '!module' => $owner
         ));
       }
     }
   }
-  if( !isset($modulesimplement[$protocol]) ) {
+  if (!isset($modulesimplement[$protocol])) {
     return array();
   }
-  if( isset($warning) ) {
+  if (isset($warning)) {
     watchdog('Y', $warning);
     drupal_set_message('Y: ' . $warning, 'error');
     return array();
   }
   $modules = $owner ? array($owner) : $modulesimplement[$protocol];
-  if( !$modules ) {
-    return( array() );
+  if (!$modules) {
+    return (array());
   }
 
   $y_cache_flag = variable_get('y_cache_flag', TRUE);
-  if( !$yinfo ) {
-    if( $y_cache_flag && ($cache = cache_get(__FUNCTION__))) {
+  if (!$yinfo) {
+    if ($y_cache_flag && ($cache = cache_get(__FUNCTION__))) {
       $yinfo = $cache->data;
     }
   }
 
-  if( $owner && isset($yinfo[$protocol][$owner]) ) {
+  if ($owner && isset($yinfo[$protocol][$owner])) {
     return $format ? $yinfo[$protocol][$owner][$format] : $yinfo[$protocol][$owner];
   }
-  
-  foreach( $modules as $module ) {
+
+  foreach ($modules as $module) {
     $callbacks = array(
-      '!t' => 'y__yaml_callback_t',
-      '!module' => 'y__yaml_callback_plugin_module',
-      '!path' => 'y__yaml_callback_plugin_path',
-      '!relativepath' => 'y__yaml_callback_plugin_relativepath',
-      '!name' => 'y__yaml_callback_plugin_name',
-      '!local' => 'y__yaml_callback_plugin_local',
-      '!call' => 'y__yaml_callback_call_user_func_array',
-      '!var' => 'y__yaml_callback_var',
-      '!setplugin' => 'y__yaml_callback_plugin_set',
-      '!menucallback' => 'y__yaml_callback_plugin_menucallback',
-      '!callback' => 'y__yaml_callback_plugin_callback',
-      '!protocol' => 'y__yaml_callback_plugin_protocol',
-      '!modulepath' => 'y__yaml_callback_plugin_modulepath',
-      '!eval' => 'y__yaml_callback_eval',
+      '!t' => 'y__yaml_callable_t',
+      '!module' => 'y__yaml_callable_plugin_module',
+      '!path' => 'y__yaml_callable_plugin_path',
+      '!relativepath' => 'y__yaml_callable_plugin_relativepath',
+      '!name' => 'y__yaml_callable_plugin_name',
+      '!local' => 'y__yaml_callable_plugin_local',
+      '!call' => 'y__yaml_callable_call_user_func_array',
+      '!var' => 'y__yaml_callable_var',
+      '!setplugin' => 'y__yaml_callable_plugin_set',
+      '!menucallback' => 'y__yaml_callable_plugin_menucallback',
+      '!callback' => 'y__yaml_callable_plugin_callback',
+      '!protocol' => 'y__yaml_callable_plugin_protocol',
+      '!modulepath' => 'y__yaml_callable_plugin_modulepath',
+      '!eval' => 'y__yaml_callable_eval',
     );
     // get config path for the module
-    if( !isset($yinfo['_config'][$module] ) ) {
+    if (!isset($yinfo['_config'][$module])) {
       $modulepath = $configinfo[$module]['path'];
-      foreach( array($modulepath => $module . '.yaml', $modulepath . 'config/' => '_config.yaml') as $path => $filename ) {
-        if (file_exists($path . $filename) ) {
+      foreach (array(
+                 $modulepath => $module . '.yaml',
+                 $modulepath . 'config/' => '_config.yaml'
+               ) as $path => $filename) {
+        if (file_exists($path . $filename)) {
           $filebase = pathinfo($filename, PATHINFO_FILENAME);
-          _y__stack_push( 'y__yaml_plugin_values',
+          _y__stack_push('y__yaml_plugin_values',
             array(
               'path' => $path,
               'module' => $module,
               'protocol' => '_config',
               'file' => $filebase . 'inc',
               'uri' => $path . $filebase . '.inc',
-              'name' => $filebase, // 'bctype'
-              'yaml uri' => $path . $filename, // 'sites/all/modules/enterprise/bc/config/entity/bctype.yaml'
-              'filename' => $filename // 'bctype.yaml'
-            ) );
-          if((($_config = yaml_parse($path . $filename, 0, $n, $callbacks)) !== FALSE)) {
+              'name' => $filebase,
+              // 'bctype'
+              'yaml uri' => $path . $filename,
+              // 'sites/all/modules/enterprise/bc/config/entity/bctype.yaml'
+              'filename' => $filename
+              // 'bctype.yaml'
+            ));
+          if ((($_config = yaml_parse($path . $filename, 0, $n, $callbacks)) !== FALSE)) {
             if (!isset($_config['path'])) {
               $_config['path'] = $path;
               $_config['filename'] = $filename;
@@ -209,12 +247,12 @@ function y__info( $protocol, $owner = NULL, $format='tree' ) {
       $yinfo['_config'][$module] = $_config ?? array('path' => $path);
       $newinfo = TRUE;
     }
-    if (!isset($yinfo[$protocol][$module]) ) {
+    if (!isset($yinfo[$protocol][$module])) {
       $conf = $yinfo['_config'][$module];
       $initarray = isset($yinfo['_config'][$module][$protocol]) ? $yinfo['_config'][$module][$protocol] : array();
       $filename = $conf['path'] . $protocol . '.yaml';
       // todo: find callbacks yaml and callbacks PHP if they will be found
-      if( file_exists($filename) ) {
+      if (file_exists($filename)) {
         _y__stack_push('y__yaml_plugin_values',
           array(
             'path' => $conf['path'],
@@ -222,29 +260,38 @@ function y__info( $protocol, $owner = NULL, $format='tree' ) {
             'protocol' => $protocol,
             'file' => $protocol . '.inc',
             'uri' => $conf['path'] . $protocol . '.inc',
-            'name' => $protocol, // 'bctype'
-            'yaml uri' => $filename, // 'sites/all/modules/enterprise/bc/config/entity/bctype.yaml'
-            'filename' => $protocol . '.yaml' // 'bctype.yaml'
-          ) );
+            'name' => $protocol,
+            // 'bctype'
+            'yaml uri' => $filename,
+            // 'sites/all/modules/enterprise/bc/config/entity/bctype.yaml'
+            'filename' => $protocol . '.yaml'
+            // 'bctype.yaml'
+          ));
         // $protocolinfo = (($info = yaml_parse_file($filename, 0, $n, $callbacks)) !== FALSE ? $info : $initarray);
-        if( ($info = yaml_parse_file($filename, 0, $n, $callbacks)) !== FALSE ) {
+        if (($info = yaml_parse_file($filename, 0, $n, $callbacks)) !== FALSE) {
           $protocolinfo = $info;
-        } else {
+        }
+        else {
           $protocolinfo = $initarray;
           drupal_set_message('Y ' . __FUNCTION__ . '(' . __LINE__ . ') error parsing ' . $filename, 'warning');
         }
         _y__stack_pop('y__yaml_plugin_values');
-      } else {
-        $protocolinfo = $initarray; 
+      }
+      else {
+        $protocolinfo = $initarray;
       }
       $yinfo[$protocol][$module] = $protocolinfo
-        ? array( 'tree' => $protocolinfo,
-                 'flat' => y__array_flatten($protocolinfo) )
-        : array( 'tree' => array(), 'flat' => array() );
+        ? array(
+          'tree' => $protocolinfo,
+          'flat' => y__array_flatten($protocolinfo)
+        )
+        : array('tree' => array(), 'flat' => array());
       $newinfo = TRUE;
 
       foreach (file_scan_directory($conf['path'] . $protocol, '|.*\.y.?ml|') as $file) {
-        if( $path = dirname($file->uri) ) { $path .= '/'; }
+        if ($path = dirname($file->uri)) {
+          $path .= '/';
+        }
         _y__stack_push('y__yaml_plugin_values',
           array(
             'path' => $path,
@@ -252,34 +299,40 @@ function y__info( $protocol, $owner = NULL, $format='tree' ) {
             'protocol' => $protocol,
             'file' => $file->name . '.inc',
             'uri' => $path . $file->name . '.inc',
-            'name' => $file->name, // 'bctype'
-            'yaml uri' => $file->uri, // 'sites/all/modules/enterprise/bc/config/entity/bctype.yaml'
-            'filename' => $file->filename // 'bctype.yaml'
-         ) );
+            'name' => $file->name,
+            // 'bctype'
+            'yaml uri' => $file->uri,
+            // 'sites/all/modules/enterprise/bc/config/entity/bctype.yaml'
+            'filename' => $file->filename
+            // 'bctype.yaml'
+          ));
         if (($info = yaml_parse_file($file->uri, 0, $n, $callbacks)) !== FALSE) {
           $newinfo = TRUE;
           $yinfo[$protocol][$module] = array(
-            'tree' => array_merge($yinfo[$protocol][$module]['tree'], $info ),
-            'flat' => array_merge($yinfo[$protocol][$module]['flat'], y__array_flatten($info) ) );
-        } else {
+            'tree' => array_merge($yinfo[$protocol][$module]['tree'], $info),
+            'flat' => array_merge($yinfo[$protocol][$module]['flat'], y__array_flatten($info))
+          );
+        }
+        else {
           drupal_set_message('Y ' . __FUNCTION__ . '(' . __LINE__ . ') error parsing ' . $file->uri, 'warning');
         }
         _y__stack_pop('y__yaml_plugin_values');
       }
     }
   }
-  if( $newinfo ) {
+  if ($newinfo) {
     drupal_alter('yinfo', $yinfo);
-    if( $y_cache_flag ) {
+    if ($y_cache_flag) {
       cache_set(__FUNCTION__, $yinfo);
     }
   }
-  if( $owner ) {
+  if ($owner) {
     return isset($yinfo[$protocol][$owner][$format]) ? $yinfo[$protocol][$owner][$format] : array();
-  } else {
+  }
+  else {
     $ret = array();
-    foreach( $yinfo[$protocol] as $name => $info ) {
-      $ret = array_merge( $ret, $info[$format] );
+    foreach ($yinfo[$protocol] as $name => $info) {
+      $ret = array_merge($ret, $info[$format]);
     }
     return $ret;
   }
@@ -295,26 +348,27 @@ function y__info( $protocol, $owner = NULL, $format='tree' ) {
  * @param null & $ret merge results into this array if passed in
  * @return array resulting array
  */
-function y__build_pattern( $protocol, $module, $patterns, &$info=NULL ) {
-  $yinfo = y__info( $protocol, $module, 'flat' );
+function y__build_pattern($protocol, $module, $patterns, &$info = NULL) {
+  $yinfo = y__info($protocol, $module, 'flat');
   $buildflat = array();
-  foreach( $patterns as $pattern => $filter ) {
-    if( !is_array($filter) ) { // this is a simple pattern
+  foreach ($patterns as $pattern => $filter) {
+    if (!is_array($filter)) { // this is a simple pattern
       $pattern = '|^' . strtr($pattern, array('*' => '([^:]*?)')) . '(.*)|';
       $mainpattern = $pattern;
       $mainreplacement = $filter;
-    } else { // this is pure regex and all patterns and replacements are regex-perfect
+    }
+    else { // this is pure regex and all patterns and replacements are regex-perfect
       $mainpattern = array_keys($filter);
       $mainreplacement = array_values($filter);
     }
     $matchingkeys = preg_grep($pattern, array_keys($yinfo));
-    $replacementkeys = preg_replace( $mainpattern, $mainreplacement, $matchingkeys );
-    foreach( $matchingkeys as $index => $key ) {
+    $replacementkeys = preg_replace($mainpattern, $mainreplacement, $matchingkeys);
+    foreach ($matchingkeys as $index => $key) {
       $buildflat[$replacementkeys[$index]] = $yinfo[$key];
     }
   }
   $buildflat = y__array_unflatten($buildflat);
-  if( $info === NULL ) {
+  if ($info === NULL) {
     return $buildflat;
   }
   $info = array_merge($info, $buildflat);
@@ -329,19 +383,19 @@ function y__build_pattern( $protocol, $module, $patterns, &$info=NULL ) {
  * @param null & $ret merge results into this array if passed in
  * @return array resulting array
  */
-function y__build_branch( $module, $protocol, $pattern, &$info=NULL ) {
+function y__build_branch($module, $protocol, $pattern, &$info = NULL) {
   $branchsearched = array();
-  $yinfo = y__info( $protocol, $module, 'flat' );
+  $yinfo = y__info($protocol, $module, 'flat');
   $buildflat = array();
   $childpattern = '|^' . strtr($pattern, array('*' => '([^:]*?)')) . '(.*)|';
   $matchingkeys = preg_grep($childpattern, array_keys($yinfo));
-  foreach( $matchingkeys as $key ) {
+  foreach ($matchingkeys as $key) {
     $buildflat[$key] = $yinfo[$key];
-    if( ($colpos = strrpos($key, ':')) !== FALSE ) {
+    if (($colpos = strrpos($key, ':')) !== FALSE) {
       $key = substr($key, 0, $colpos);
-      if( empty($branchsearched[$key]) ) {
+      if (empty($branchsearched[$key])) {
         $branchsearched[$key] = TRUE;
-        while( ($colpos = strrpos($key, ':')) !== FALSE ) {
+        while (($colpos = strrpos($key, ':')) !== FALSE) {
           $key = substr($key, 0, $colpos);
           $parentpattern = '|^' . $key . ':([^:]*?)$|';
           $parentkeys = preg_grep($parentpattern, array_keys($yinfo));
@@ -359,7 +413,7 @@ function y__build_branch( $module, $protocol, $pattern, &$info=NULL ) {
     }
   }
   $buildflat = y__array_unflatten($buildflat);
-  if( $info === NULL ) {
+  if ($info === NULL) {
     return $buildflat;
   }
   $info = array_merge($info, $buildflat);
@@ -373,24 +427,24 @@ function y__build_branch( $module, $protocol, $pattern, &$info=NULL ) {
  * @param array $protocols
  * @param $api
  * @param $module
- * @param squishiness
+ * @param squishiness - this dissolves the upper levels of the array structure (idea is to eliminate top indexes and union the sub-arrays together)
  * @return array
  */
-function y__protocol_get_all( $protocols, $api, $module, $squishiness=0 ) {
-  if( !is_array($protocols) ) {
+function y__protocol_get_all($protocols, $api, $module, $squishiness = 0) {
+  if (!is_array($protocols)) {
     $protocols = array($protocols);
   }
   $ret = array();
-  foreach( $protocols as $protocol ) {
-    $yinfo = y__protocol( $protocol, $api, $module );
+  foreach ($protocols as $protocol) {
+    $yinfo = y__protocol($protocol, $api, $module);
     $ret += $yinfo;
   }
-  if( $squishiness ) { // squishiness does a quick union of subarrays
-    if( $squishiness > 0 ) {
-      while( $squishiness-- ) {
-        foreach( $ret as $key => $value) {
-          if( is_array($value) ) {
-            unset( $ret[$key]);
+  if ($squishiness) { // squishiness does a quick union of subarrays
+    if ($squishiness > 0) {
+      while ($squishiness--) {
+        foreach ($ret as $key => $value) {
+          if (is_array($value)) {
+            unset($ret[$key]);
             $ret += $value;
           }
         }
@@ -406,38 +460,50 @@ function y__protocol_get_all( $protocols, $api, $module, $squishiness=0 ) {
  * @param ... more parameters
  * @return array of protocol information supplied by controller
  */
-function y__protocol(string $protocol, string $api, $module=NULL, array &$info=NULL) {
+function y__protocol(string $protocol, string $api, $module = NULL, array &$info = NULL) {
   static $addonprotocolsfetched = FALSE;
   static $protocoldef = array(
     'instance' => array(),
-    'field' =>    array(),
+    'field' => array(),
     'protocol' => array(),
     'entity' => array(
       'schema' => array(
         'pattern' => array(
           "*:schema:" => '$1:$2',
           "*:description" => '$1:description',
-          "*:properties:*:schema:" => '$1:fields:$2:$3' ) ),
-      'property info alter' => array(
+          "*:properties:*:schema:" => '$1:fields:$2:$3',
+        )
+      ),
+      'property info' => array(
         'pattern' => array(
-          "*:properties:*:info:" => '$1:properties:$2:$3' ) ),
+          "*:properties:*:info:" => '$1:properties:$2:$3'
+        )
+      ),
+      'extra fields' => array(
+        'pattern' => array(
+          "*:properties:*:extra:" => '$1:$2:$3'
+        )
+      ),
     ),
+    'systemform' => array(),
+    'layout' => array(),
+    'theme' => array(),
   );
-  if( !isset($info) ) {
+  if (!isset($info)) {
     $info = array();
   }
-  if( !isset($protocoldef[$protocol]) ) {
-    if( !$addonprotocolsfetched ) {
+  if (!isset($protocoldef[$protocol])) {
+    if (!$addonprotocolsfetched) {
       $protocoldef += y__info('protocol');
       $addonprotocolsfetched = TRUE;
     }
-    if( !isset($protocoldef[$protocol]) ) { // if still not set after retrieving protocols, set an empty stub
+    if (!isset($protocoldef[$protocol])) { // if still not set after retrieving protocols, set an empty stub
       $protocoldef[$protocol] = array();
     }
   }
-  $protocol_instructions = $protocoldef[$protocol][$api] ?? ($protocoldef[$protocol]['default'] ?? array( 'array' => '+' ));
-  foreach( $protocol_instructions as $buildtype => $patterns ) {
-    switch( $buildtype ) {
+  $protocol_instructions = $protocoldef[$protocol][$api] ?? ($protocoldef[$protocol]['default'] ?? array('array' => '+'));
+  foreach ($protocol_instructions as $buildtype => $patterns) {
+    switch ($buildtype) {
       case 'pattern':
         y__build_pattern($protocol, $module, $patterns, $info);
         break;
@@ -445,7 +511,7 @@ function y__protocol(string $protocol, string $api, $module=NULL, array &$info=N
       default:
         $yinfo = $yinfo ?? y__info($protocol, $module);
         foreach ($yinfo as $key => $apiinfo) {
-          if( isset($apiinfo[$api]) ) {
+          if (isset($apiinfo[$api])) {
             $info[$key] = $info[$key] ?? array();
             switch ($patterns) {
               case '+':
@@ -468,18 +534,6 @@ function y__protocol(string $protocol, string $api, $module=NULL, array &$info=N
   return $info;
 }
 
-/**
- * Implements hook_entity_property_info_alter().
- * This may or may not be a good idea...
- * It is a demonstration of how y can automatically implement hooks for subscribing modules.
- * In this case, y will implement hook_entity_property_info_alter() for any module
- * implementing an entity using y -- one less hook to implement.
- * It would be quite easy to do this with MANY superfluous hooks.
- */
-function y_entity_property_info_alter(&$info) {
-  y__protocol('entity', 'property info alter', NULL, $info );
-}
-
 /** Function does nothing and can be passed as default to y__plugin so result is guaranteed to be callable */
 function _y__donothing() {
   return;
@@ -493,26 +547,28 @@ function _y__donothing() {
  *   callbackname:
  *     function: name_of_function
  *     uri: file_containing_function_definition
- * @param $info an array of configuration information (eg. all the form information associated with an entity) 
+ * @param $info an array of configuration information (eg. all the form information associated with an entity)
  * @param $type a selector into that array (eg. the bundle name using a form) (use NULL if $info has the callbackname directly)
  * @param $callbackname the callback name (eg. form validation)
  * @param string $default (eg. the name of a default function to be returned if nothing else pans out)
  * @return string the name of a callable function or the default (which may be a callable function name)
  */
-function y__plugin( array $info, string $type, string $callbackname, $default='' ): string {
+function y__plugin(array $info, string $type, string $callbackname, $default = ''): string {
   $callback = ($type === NULL)
     ? $info[$callbackname] ?? $default
     : $info[$type][$callbackname] ?? $default;
-  if( $callback ) {
-    if( is_array( $callback ) ) {
+  if ($callback) {
+    if (is_array($callback)) {
       if (!empty($callback['uri']) && file_exists($callback['uri'])) {
         require_once $callback['uri'];
       }
       $callbackname = $callback['function'] ?? $default;
-    } else {
+    }
+    else {
       $callbackname = $callback;
     }
-  } else {
+  }
+  else {
     $callbackname = $default;
   }
   $ret = function_exists($callbackname) ? $callbackname : $default;
@@ -527,468 +583,46 @@ function y__plugin( array $info, string $type, string $callbackname, $default=''
  * This is probably a really, super, bad idea and that's why it's commented, but it's pretty
  * cool. If y were incorporated into core, these sorts of things could happen automatically
  * at that level.
-function _y_init() {
-  // Instantiate YAML-defined local hooks
-  if ( ($hookfunctiondefs = cache_get(__FUNCTION__)) === FALSE) {
-    $hookfunctiondefs = new stdClass();
-    $hookfunctiondefs->data = '';
-
-    if ($hookdef = y__protocol_hook(NULL, 'local hooks')) {
-      foreach ($hookdef as $hookmodule => $hooks) {
-        foreach ($hooks as $hookname => $hookinfo) {
-          $hookfunctiondefs->data .= "\nfunction " . $hookmodule . '_' . $hookname . '(){return ' . var_export($hookinfo, TRUE) . ';}';
-        }
-      }
-      cache_set(__FUNCTION__, $hookfunctiondefs->data);
-    }
-  }
-  if (!empty($hookfunctiondefs->data)) {
-    try {
-      eval($hookfunctiondefs->data);
-    }
-    catch (ParseError $e) { // got to clear the error-full statement to be able to move forward.
-      cache_set( __FUNCTION__, FALSE );
-      _drupal_exception_handler( $e );
-    }
-  }
-}
-*/
-
-/**
- * Query / display functionality
+ * function _y_init() {
+ * // Instantiate YAML-defined local hooks
+ * if ( ($hookfunctiondefs = cache_get(__FUNCTION__)) === FALSE) {
+ * $hookfunctiondefs = new stdClass();
+ * $hookfunctiondefs->data = '';
+ *
+ * if ($hookdef = y__protocol_hook(NULL, 'local hooks')) {
+ * foreach ($hookdef as $hookmodule => $hooks) {
+ * foreach ($hooks as $hookname => $hookinfo) {
+ * $hookfunctiondefs->data .= "\nfunction " . $hookmodule . '_' . $hookname . '(){return ' . var_export($hookinfo, TRUE) . ';}';
+ * }
+ * }
+ * cache_set(__FUNCTION__, $hookfunctiondefs->data);
+ * }
+ * }
+ * if (!empty($hookfunctiondefs->data)) {
+ * try {
+ * eval($hookfunctiondefs->data);
+ * }
+ * catch (ParseError $e) { // got to clear the error-full statement to be able to move forward.
+ * cache_set( __FUNCTION__, FALSE );
+ * _drupal_exception_handler( $e );
+ * }
+ * }
+ * }
  */
-function y__display_array($table) {
-  $args = func_get_args();
-  $output = array();
-  foreach( $args as $key => $value ) {
-    $output[] = array(
-      '#title' => $key,
-      '#type' => 'textfield',
-      '#value' => (string) $value,
-    );
-  }
-  return $output;
-}
-
-/**
- * Recursively substitute special patterns in array
- * @param $var
- * @param $substarray
- */
-function _y__var_substitute( & $var, $substarray ) {
-  if( !is_array($var) ) {
-    if( in_array($var, array_keys($substarray), TRUE) ) {
-      $var = $substarray[$var];
-    } elseif( is_string($var) ) {
-      $var = strtr( $var, $substarray );
-    }
-  } else {
-    foreach( $var as & $value ) {
-      _y__var_substitute( $value, $substarray );
-    }
-  }
-  return $var;
-}
-
-/**
- * Display a query result set as a table using the given render rules
- * @param $resultset   // stuff to display, array of arrays or objects
- * @param null $render // settings to initialize output
- * @return array|null  // table render array
- */
-function y__display_table( $resultset, $rowaccess, $colaccess, $render=NULL ) {
-  if( !$render ) {
-    $render = array(
-                'querytable' => array(
-                  '#empty' => t('No results'), ) );
-  }
-  $format_def = reset($render);
-  $name = key($render);
-  $header = $format_def['#header'] ?? array();
-  $row_def = $format_def['#rows'] ?? array();
-  $tokens = array();
-  $rows = array();
-
-  foreach( $resultset as $result ) {
-    $result = (array)$result;
-    if( !$tokens ) {
-      $tokens = array_keys($result);
-      foreach( $tokens as &$token ) {
-        $token = '[' . $token . ']';
-      }
-    }
-    if (!$header) {
-      $header = array_combine(array_keys($result), array_keys($result));
-    }
-    if( !$row_def ) {
-      $rows[] = $result;
-    } else {
-      $rows[] = _y__var_substitute($row_def, array_combine($tokens,array_values($result)));
-    }
-  }
-  $render[$name] = array_merge( $render[$name],
-    array(
-      '#theme' => 'table',
-      '#header' => $header,
-      '#rows' => $rows,
-    )
-  );
-  return $render;
-}
-
-/**
- * Build an array of tokens in form token=>'[token]' for substitution-handling
- * @param array $tokens
- * @return array
- */
-function y__token_build_list( array $tokens ) {
-  $ret = array();
-  foreach( $tokens as $token ) {
-    $ret[$token] = '[' . $token . ']';
-  }
-  return $ret;
-}
-
-/**
- * Display a query result set as a table using the given render rules
- * @param $resultset   // stuff to display, array of arrays or objects
- * @param null $render // settings to initialize output
- * @return array|null  // table render array
- */
-function y__display_queryresults_inline( $resultset, $config ) {
-  $solo = (array) reset($resultset);
-  $tokens = y__token_build_list(array_keys($solo));
-  $config += array( 'render' => array(), 'rowaccess' => array(), 'colaccess' => array() );
-  $rowaccess = $config['rowaccess'];
-  $colaccess = $config['colaccess'];
-  $render = $config['render'];
-  $row_def = $config['render']['rows'] ?? array_keys($tokens);
-  $rows = array();
-
-  foreach( $resultset as $result ) {
-    $result = (array)$result;
-    $substitution = array_combine($tokens,array_values($result));
-    if( isset($rowaccess['callback']) ) {
-      $args = array( $result ) + $rowaccess['arguments'] ?? array();
-      if( !call_user_func_array($rowaccess['callback'], $args) ) {
-        continue;
-      }
-    }
-    $defined_row = $row_def;
-    $row = _y__var_substitute($defined_row, $substitution);
-    if( isset($colaccess['callback']) ) {
-      if( $function = y__plugin($colaccess, 'callback') ) {
-        $args = array( $row_def, $row );
-        if( !empty($colaccess['arguments'])) {
-          $args = array_merge($args, $colaccess['arguments']);
-        }
-        $row = call_user_func_array($function, $args);
-      }
-    }
-    $rows[] = $row;
-  }
-  $header_def = $render['header'] ?? array();
-      // '#theme' => 'fieldset',
-      // '#empty' => t('No results'), );
-  $footer_def = $render['footer'] ?? array();
-  if( isset($substitution)) {
-    $header_def = _y__var_substitute($header_def, $substitution);
-    $footer_def = _y__var_substitute($footer_def, $substitution);
-  }
-  $render = array( 'header' => $header_def, 'rows' => $rows, 'footer' => $footer_def );
-  return $render;
-}
-
-/**
- * Display a query result set as a table using the given render rules
- * @param $resultset   // stuff to display, array of arrays or objects
- * @param null $render // settings to initialize output
- * @return array|null  // table render array
- */
-function y__display_queryresults( $resultset, $config ) {
-  $solo = (array) reset($resultset);
-  $tokens = y__token_build_list(array_keys($solo));
-  $context = $config['protocol']['context'] ?? array();
-  $config +=  array(
-    'rowaccess' => array(),
-    'colaccess' => array() );
-  $rowaccess = $config['rowaccess'];
-  $colaccess = $config['colaccess'];
-
-  $row_def = $config['render']['iterate'] ?? array_values( $tokens );
-  $rows = array();
-
-  foreach( $resultset as $result ) {
-    $result = (array)$result;
-    $substitution = array_combine($tokens,array_values($result)) + $context;
-    if( isset($rowaccess['callback']) ) {
-      $args = array( $result ) + $rowaccess['arguments'] ?? array();
-      if( !call_user_func_array($rowaccess['callback'], $args) ) {
-        continue;
-      }
-    }
-    $defined_row = $row_def;
-    $row = _y__var_substitute($defined_row, $substitution);
-//    if( isset($colaccess['callback']) ) {
-//      if( $function = y__plugin($colaccess, 'callback') ) {
-//        $args = array( $row_def, $row );
-//        if( !empty($colaccess['arguments'])) {
-//          $args = array_merge($args, $colaccess['arguments']);
-//        }
-//        $row = call_user_func_array($function, $args);
-//      }
-//    }
-    $rows[] = $row;
-  }
-  if( !isset($substitution) ) {
-    $substitution = $context;
-  }
-  $substitution['[@iteration]'] = $rows;
-  $substitution['[@keys]'] = array_keys($solo);
-  $substitution['[@values]'] = array_values($solo);
-  $substitution = array_merge($substitution, $context);
-
-  $render = $config['render']['content'] ?? array( 
-      "#theme" => 'table', "#empty" => t('No results'),
-      "#header" => '[@keys]', '#rows' => '[@iteration]');
-  $render = _y__var_substitute($render, $substitution );
-  return $render;
-}
-
-/**
- * transform a token of a particular type into its values
- * @param $token of form
- *   global: globalvarname: globalvarproperty OR
- *           globalvarname
- * @return token value if successful, null if unsuccessful
- */
-function _y__token_data( array $token ) {
-  $value = reset( $token );
-  $method = key($token);
-  switch ( $method ) {
-    case 'arg': // return a value at a numerical index into a context array
-      $args = & drupal_static(__FUNCTION__, array());
-      return $args[$value];
-    case 'global': // return a global variable value
-      if (is_array($value)) {
-        $varprop = reset($value);
-        $varname = key($value);
-        global $$varname;
-        return $$varname->$varprop;
-      }
-      else {
-        global $$value;
-        return $$value;
-      }
-      break;
-    case 'session': // return a session variable value
-      return $_SESSION[$value];
-      break;
-    case 'callback': // return the result of a callback
-      if( is_array($value) ) {
-        $name = key($value);
-        if( is_integer($name) ) {
-          $function = reset($value);
-          $args = array();
-        } else {
-          $function = $name;
-          if( !($args = reset($value)) ) {
-            $args = array();
-          }
-        }
-      } else {
-        $function = $value;
-        $args = array();
-      }
-
-      return call_user_func_array( $function, $args );
-  }
-
-  return NULL;
-}
-
-// Helper function to show a query string
-function _y__query_get_string(SelectQueryInterface $query) {
-  $string = (string) $query;
-  $arguments = $query->arguments();
-
-  if (!empty($arguments) && is_array($arguments)) {
-    foreach ($arguments as $placeholder => &$value) {
-      if (is_string($value)) {
-        $value = "'$value'";
-      }
-    }
-
-    $string = strtr($string, $arguments);
-  }
-
-  return $string;
-}
-
-/**
- * Build a query from a query definition array
- * @param $config
- * @return array
- */
-function y__query_build( $config ) {
-  if( empty($config['base table'])) {
-    return array();
-  }
-
-  $config += array( 'arguments' => array(), 'build' => array() );
-  // Get data values
-  $substitution = $config['protocol']['context'] ?? array();
-  foreach( $config['arguments'] as $name => $value ) {
-    $substitution[$name] = _y__token_data( $value );
-  }
-
-  // Make the query
-  $basetable = reset($config['base table']);
-  $basetablealias = $config['base table'][$basetable];
-  $query = db_select( $basetable, $basetablealias );
-  foreach( $config['build'] as $querycfg ) {
-    foreach( $querycfg as $db_op => $args ) {
-      _y__var_substitute($args, $substitution);
-      if ( in_array($db_op, array( 'addExpression',
-        'addField',
-        'addJoin',
-        'extend',
-        'innerJoin',
-        'join',
-        'leftJoin',
-        'rightJoin', ) ) ) {
-        $query = call_user_func_array(array($query, $db_op), $args);
-      }
-      else {
-        call_user_func_array( array($query, $db_op), $args);
-      }
-    }
-  }
-  return $query;
-}
-
-/**
- * Execute a query and display and return results
- * @param $config array of query, arguments, and display
- *   query:
- *     base table:
- *       base_table_name: base_table_name_alias
- *     arguments:
- *       name_of_arg: definition_of_arg (see y__q_datagetter for how to define this
- *     query:
- *     - operation: arguments
- *       differentoperation: arguments
- *     - operation: morearguments...
- *   display:
- *     display callback: name of a function to process the results of the query
- * @return array
- */
-function y__views() {
-  $args = func_get_args();
-  $ret = array();
-  $views = array_shift($args);
-  if( !is_array($views) ) {
-    $views = array( $views );
-  }
-  drupal_static('_y__token_data', $args, TRUE);
-
-  foreach ($views as $config) {
-    if (empty($config['query']) || !($query = y__query_build($config['query']))) {
-      return array();
-    }
-    $querystring = _y__query_get_string($query);
-    $queryresult = $query->execute()->fetchAll();
-
-    // Return results or display output
-    if (!($displayfunction = y__plugin($config, 'display', 'callback'))) {
-      $displayfunction = 'y__display_queryresults';
-    }
-    $render = call_user_func_array($displayfunction, array(
-      $queryresult,
-      $config['display'] ?? array()
-    ));
-    $ret[] = $render;
-  }
-
-  if( (count($ret) == 1) && is_integer($key = key($ret)) ) {
-    return $ret[$key];
-  }
-  return $ret;
-}
-
-function _y__page_context( $context ) {
-  return NULL;
-}
-
-function _y__page_render($renderinfo, & $context) {
-  if( !is_array($renderinfo) ) {
-    return $renderinfo;
-  }
-  $ret = array();
-  foreach( $renderinfo as $key => $value ) {
-    if( is_integer($key) ) {
-      $ret[$key] = _y__page_render( $value, $context );
-    } else {
-      switch ($key) {
-        case 'protocol': break;
-        case 'function':
-          if (isset($renderinfo['uri'])) {
-            include_once $renderinfo['uri'];
-          }
-          $arguments = $renderinfo['arguments'] ?? array();
-          $ret += $value($arguments); // must return an array
-          break;
-        case 'uri':
-        case 'arguments':
-          if (isset($renderinfo['function'])) {
-            break; // gets used above
-          }
-        default:
-          $ret[$key] = _y__page_render($value, $context);
-      }
-    }
-  }
-  return $ret;
-}
-
-function y__page_display($id, $module=NULL) {
-  $ret = array( "#type" => 'page' );
-  $pagedefs = y__protocol('page', 'layout', $module);
-  $context = isset($pagedefs[$id]['context']) ? _y__page_context($pagedefs[$id]['context']) : array();
-  foreach( $pagedefs[$id]['render'] as $key => $pagedef ) {
-    $ret[$key] = _y__page_render($pagedef, $context);
-  }
-  return $ret;
-}
 
 /**
  * Implements hook_menu().
  */
 function y_menu() {
-  return array(
-    'admin/config/development/y' => array(
-      'title' => 'YAML configuration',
-      'description' => 'Configure YAML configuration',
-      'page callback' => 'drupal_get_form',
-      'page arguments' => array( 'y__config_form' ),
-      'access arguments' => array( 'administer site configuration' ),
-    )
-  );
+  return y__protocol_get_all(array('systemform'), 'menu', NULL, 1);
 }
 
-function y__config_form($form, &$form_state) {
-  $form['y_cache_flag'] = array(
-    '#type' => 'checkbox',
-    '#title' => t('YAML Configuration caching'),
-    '#default_value' => variable_get('y_cache_flag', TRUE),
-    '#description' => t('Turn YAML configuration caching on and off.')
-  );
-
-  return system_settings_form($form);
-}
-
+/**
+ * Debug function to just go emitting YAML elements wherever.
+ * @param $elements
+ */
 function y__emit($elements) {
-  if( FALSE ) { // hooked in at drupal_render, just set true to start emitting stuff
+  if (FALSE) { // hooked in at drupal_render, just set true to start emitting stuff
     if (!$elements) {
       return;
     }
@@ -1023,4 +657,38 @@ function y__emit($elements) {
     yaml_emit_file('yaml/' . str_pad($index, 4, '0', STR_PAD_LEFT) . '_' . $type . '.yaml', $elements);
     variable_set('yaml_render', ++$index);
   }
+}
+
+/**
+ * Ensure term is standardized, either lower-case, space-delimited or CamelCase
+ * @param $term
+ * @param $format # output format is either 'camel' for camel case, or 'words' for lc words
+ * @return string
+ */
+function y__term_normalize($term, $outputstyle) {
+  if (empty($term)) {
+    return $term;
+  }
+  if ($outputstyle == 'camel') { // return camelcase
+    $term = (stristr($term, ' ') === FALSE)
+      ? ucfirst($term)
+      : strtr(ucwords($term), array(' ' => ''));
+  }
+  else {
+    if (ctype_upper($term[0])) {
+      $camelarray = y__term_camel2array($term);
+      $term = strtolower(implode(' ', $camelarray));
+    }
+  }
+  return $term;
+}
+
+/*
+ * Convert a camelcase term into an array
+ * Duplicate of qbxml_camelterm_to_array()
+ */
+function y__term_camel2array($camelterm) {
+  $camelarray = array();
+  $ret = preg_match_all('/[A-Z][a-z]+/', $camelterm, $camelarray);
+  return ($ret == FALSE ? array() : $camelarray[0]);
 }
