@@ -56,7 +56,8 @@ function y__yaml_callable_plugin_module($value, $tag, $flags) {
 function y__yaml_callable_plugin_path($value = NULL, $tag, $flags) {
   // $plugin = & drupal_static('y__yaml_plugin_values', array());
   $params = _y__stack_peek('y__yaml_plugin_values');
-  if ($value === NULL) {
+  // if ($value === NULL) {
+  if (empty($value)) {
     return rtrim($params['path'], '/');
   }
   return $params['path'] . $value;

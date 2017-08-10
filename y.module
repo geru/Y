@@ -13,18 +13,11 @@ require_once 'y.yamlcallables.inc';
 require_once 'y.displaymgt.inc';
 
 /**
- * Implements hook_hook_info().
- */
-function y_hook_info() {
-  return array('y' => array('group' => 'y'));
-}
-
-/**
  * Implements hook_y()
  * @return array
  */
 function y_y() {
-  return array('layout', 'theme', 'systemform');
+  return array('layout', 'theme', 'admin');
 }
 
 /**
@@ -485,7 +478,7 @@ function y__protocol(string $protocol, string $api, $module = NULL, array &$info
         )
       ),
     ),
-    'systemform' => array(),
+    'admin' => array(),
     'layout' => array(),
     'theme' => array(),
   );
@@ -611,10 +604,52 @@ function y__plugin(array $info, string $type, string $callbackname, $default = '
  */
 
 /**
+ * Y-defined version of Drupal's system_settings_form
+ */
+function y__system_settings_form($form, &$form_state, $protocol, $api, $module, $id) {
+  $yinfo = y__protocol($protocol, $api, $module); // $yinfo = y__protocol('admin', 'form', 'y');
+  foreach( $yinfo[$id] as $name => $forminfo ) {
+    if( isset($forminfo['#variable_default']) )
+      $forminfo['#default_value'] = variable_get($name, $forminfo['#variable_default']);
+    $form[$name] = $forminfo;
+  }
+  return system_settings_form($form);
+}
+
+
+/**
  * Implements hook_menu().
  */
 function y_menu() {
-  return y__protocol_get_all(array('systemform'), 'menu', NULL, 1);
+  return y__protocol_get_all('admin', 'menu', NULL, 1);
+}
+
+/**
+ * Implements hook_permission().
+ * For all modules implement Y admin protocol
+ */
+function y_permission() {
+  return y__protocol_get_all('admin', 'permission', NULL, 1);
+}
+
+/**
+ * Implements hook_hook_info();
+ */
+function y_hook_info() {
+  return y__protocol_get_all('admin', 'hook_info', NULL, 1 );
+}
+
+/**
+ * Implements hook_help().
+ * @param $path
+ * @return bool|null|string
+ */
+function y_help($path) {
+  $yinfo = y__protocol_get_all('admin', 'help', NULL, 1);
+  if( !empty($yinfo[$path])) {
+    return y__html($yinfo[$path]);
+  }
+  return FALSE;
 }
 
 /**
@@ -692,3 +727,36 @@ function y__term_camel2array($camelterm) {
   $ret = preg_match_all('/[A-Z][a-z]+/', $camelterm, $camelarray);
   return ($ret == FALSE ? array() : $camelarray[0]);
 }
+
+/**
+ * Utility function to output html from config file
+ * html is of format:
+ * - index: raw stuff to output or
+ * - index:
+ *     tag: stuff enclosed by tag or
+ * - index:
+ *   - tag: stuff enclosed by tag
+ * @param $html
+ * @return string
+ */
+function y__html( $html ) {
+  $output = '';
+  if (is_array($html)) {
+    foreach ($html as $index => $info) {
+      if (is_integer($index)) {
+        foreach ($info as $tag => $text) {
+          $output .= '<' . $tag . '>' . $text . '</' . $tag . '>';
+        }
+      }
+      else {
+        $output .= '<' . $index . '>' . $info . '</' . $index . '>';
+      }
+    }
+  }
+  else {
+    $output .= $html;
+  }
+  
+  return $output;
+}
+

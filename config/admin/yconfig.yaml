@@ -7,18 +7,21 @@ yconfig:
       title: YAML configuration
       description: Configure YAML configuration
       page callback: drupal_get_form
-      page arguments: [ y__config_form ]
+      page arguments: [ y__system_settings_form, admin, form, 'y', yconfig ]
       access arguments: [ administer site configuration ]
-      << : *menucallback
+      # << : *menucallback this is formula if yconfig.inc file exists, but y__system_settings_form has now been set in Y module
 
   form:
     description:
       '#type': item
       '#title': !t Configure the Y Module
-      '#description': !t This page is also an example of how to use the Y Module. The form callback is a Y plugin.
+      '#description': !t This page is also an example of how to use the Y Module.
     y_cache_flag:
       '#type': checkbox
       '#title': !t YAML Configuration caching
       '#description': !t Turn YAML configuration caching on and off.
+      '#variable_default': TRUE # creates system-wide variable which defaults to ON
 
+  hook_info:
+    'y': { group: 'y' }
 ...
