@@ -20,7 +20,7 @@ function y_entity_property_info_alter(&$info) {
  * Get rich extra fields information. This can be used as a basis for implementing
  * hook_field_extra_fields()
  */
-function y__entity_extraFields($entityType) {
+function y__entity_extraFields($entityType, $bundle=NULL) {
   static $entityproperties = NULL;
   static $extraentityproperties = NULL;
   static $extrapropertybundles = NULL;
@@ -91,7 +91,7 @@ function y__entity_extraFields($entityType) {
       $extras[$entityType][$bundlename][$camelname] = $info;
     }
   }
-  return $extras;
+  return $bundle ? ($extras[$entityType][$bundle] ?? array()) : $extras[$entityType];
 }
 
 /**

@@ -144,8 +144,7 @@ function y__yaml_callable_plugin_local($values, $tag, $flags) {
 function y__yaml_callable_plugin_modulepath($value, $tag, $flags) {
   // $plugin = & drupal_static('y__yaml_plugin_values', array());
   $params = _y__stack_peek('y__yaml_plugin_values');
-  $module = $params['module'];
-  $modulepath = drupal_get_path('module', $module);
+  $modulepath = $params['modulepath'];
   if ($value) {
     $modulepath .= '/' . $value;
   }

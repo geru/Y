@@ -296,4 +296,3 @@ function y__page_render($id, $module = NULL) {
   }
   return $ret;
 }
-

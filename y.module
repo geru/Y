@@ -148,10 +148,11 @@ function y__info($protocol, $owner = NULL, $format = 'tree') {
   }
   if ($owner) {
     if (!isset($protocolsimplemented[$owner])) {
-      $warning = t('Protocol !protocol requested  of module !module that provides none.', array(
+      return array(); // fail quietly -- this happens when hook_schema() tries to find Y after uninstall -- must be overriden
+      /*$warning = t('Protocol !protocol requested  of module !module that provides none.', array(
         '!protocol' => $protocol,
         '!module' => $owner
-      ));
+      )); // uncomment to fail noisily */
     }
     else {
       if (!in_array($protocol, $protocolsimplemented[$owner])) {
@@ -190,8 +191,8 @@ function y__info($protocol, $owner = NULL, $format = 'tree') {
     $callbacks = array(
       '!t' => 'y__yaml_callable_t',
       '!module' => 'y__yaml_callable_plugin_module',
-      '!path' => 'y__yaml_callable_plugin_path',
-      '!relativepath' => 'y__yaml_callable_plugin_relativepath',
+      '!path' => 'y__yaml_callable_plugin_path', // path to YAML / plugin from Drupal root
+      '!relativepath' => 'y__yaml_callable_plugin_relativepath', // path to YAML / plugin from module root
       '!name' => 'y__yaml_callable_plugin_name',
       '!local' => 'y__yaml_callable_plugin_local',
       '!call' => 'y__yaml_callable_call_user_func_array',
@@ -200,7 +201,7 @@ function y__info($protocol, $owner = NULL, $format = 'tree') {
       '!menucallback' => 'y__yaml_callable_plugin_menucallback',
       '!callback' => 'y__yaml_callable_plugin_callback',
       '!protocol' => 'y__yaml_callable_plugin_protocol',
-      '!modulepath' => 'y__yaml_callable_plugin_modulepath',
+      '!modulepath' => 'y__yaml_callable_plugin_modulepath', // path to module from Drupal root
       '!eval' => 'y__yaml_callable_eval',
     );
     // get config path for the module
@@ -216,6 +217,7 @@ function y__info($protocol, $owner = NULL, $format = 'tree') {
             array(
               'path' => $path,
               'module' => $module,
+              'modulepath' => $configinfo[$module]['path'],
               'protocol' => '_config',
               'file' => $filebase . 'inc',
               'uri' => $path . $filebase . '.inc',
@@ -250,6 +252,7 @@ function y__info($protocol, $owner = NULL, $format = 'tree') {
           array(
             'path' => $conf['path'],
             'module' => $module,
+            'modulepath' => $configinfo[$module]['path'],
             'protocol' => $protocol,
             'file' => $protocol . '.inc',
             'uri' => $conf['path'] . $protocol . '.inc',
@@ -289,6 +292,7 @@ function y__info($protocol, $owner = NULL, $format = 'tree') {
           array(
             'path' => $path,
             'module' => $module,
+            'modulepath' => $configinfo[$module]['path'],
             'protocol' => $protocol,
             'file' => $file->name . '.inc',
             'uri' => $path . $file->name . '.inc',
@@ -616,7 +620,6 @@ function y__system_settings_form($form, &$form_state, $protocol, $api, $module, 
   return system_settings_form($form);
 }
 
-
 /**
  * Implements hook_menu().
  */
@@ -636,7 +639,7 @@ function y_permission() {
  * Implements hook_hook_info();
  */
 function y_hook_info() {
-  return y__protocol_get_all('admin', 'hook_info', NULL, 1 );
+  return array( 'y' => array( 'group' => 'y' ) );
 }
 
 /**
@@ -760,3 +763,40 @@ function y__html( $html ) {
   return $output;
 }
 
+/**
+ * Return Drupal relative path of a directory (needed for uninstalled modules that drupal_get_path() won't find.
+ * @param $dir
+ */
+function y__drupal_path( $dir ) {
+  $ret = $dir;
+  $drupalpath = DRUPAL_ROOT;
+  if( ($pos = stripos($dir, $drupalpath)) !== FALSE ) {
+    $ret = substr( $dir, $pos + strlen($drupalpath)+1 );
+  }
+  return $ret; // not a meaningful result, but will generate a meaningfull error if it happens
+}
+
+/**
+ * Implement hook_schema for anyone doing that. Tricky because module is not loaded when called on uninstall
+ */
+function y__hook_schema( $module, $dir, $includefile, $protoschemas ) {
+  if( !empty($includefile) ) require_once $dir . '/' . $includefile;
+  $ret = array();
+  foreach( $protoschemas as $protoschema ) {
+    $protocol = $protoschema['protocol'];
+    $schema = $protoschema['api'];
+
+    if (!($ret = y__protocol($protocol, $schema, $module))) {
+      $hook_y = $module . '_y';
+      y__register_extra_config(array(
+        $module => array(
+          'protocols implemented' => $hook_y(),
+          'path' => y__drupal_path($dir)
+        )
+      )); // workaround to deal with uninstallation
+      y__protocol($protocol, $schema, $module, $ret);
+    }
+  }
+  return $ret;
+
+}
