@@ -101,6 +101,17 @@ function y__register_extra_config(array $extraconfiginfo) {
 }
 
 /**
+ * Provide mechanism so a newly installed module can make sure its own information gets loaded.
+ * Put call in hook_install()
+ */
+function y__info_static_cache_clear() {
+  $modulesimplement = &drupal_static('y__info:modulesimplement', NULL, TRUE);
+  $protocolsimplemented = &drupal_static('y__info:protocolsimplemented', array(), TRUE);
+  $yinfo = &drupal_static('y__info', array(), TRUE);
+  $configinfo = &drupal_static('y__extra_config', array(), TRUE);
+}
+
+/**
  * Fetch all of the information defined by the owning module according to the protocol
  * This is the meat of it all
  * @param null $owner
@@ -173,7 +184,7 @@ function y__info($protocol, $owner = NULL, $format = 'tree') {
   }
   $modules = $owner ? array($owner) : $modulesimplement[$protocol];
   if (!$modules) {
-    return (array());
+    return array();
   }
 
   $y_cache_flag = variable_get('y_cache_flag', TRUE);
@@ -723,7 +734,7 @@ function y__emit($elements) {
  * @param $format # output format is either 'camel' for camel case, or 'words' for lc words
  * @return string
  */
-function y__term_normalize($term, $outputstyle) {
+function y__term_normalize($term, $outputstyle='words') {
   if (empty($term)) {
     return $term;
   }
@@ -797,7 +808,7 @@ function y__drupal_path( $dir ) {
 }
 
 /**
- * Implement hook_schema for anyone doing that. Tricky because module is not loaded when called on uninstall
+ * Implement hook_api for anyone doing that. Tricky because module is not loaded when called on uninstall
  */
 function y__hook_schema( $module, $dir, $includefile, $protoschemas ) {
   if( !empty($includefile) ) require_once $dir . '/' . $includefile;

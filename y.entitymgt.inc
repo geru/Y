@@ -54,17 +54,17 @@ function y__entity_extraFields($entityType, $bundle=NULL) {
     $info['form'] += $defaults;
     $info['display'] += $defaults;
     $info['type'] = 'property';
-    $extras[$entityType][$entityType][$name] = $info;
+    $extras[$entityType][$name] = $info;
   }
 
   // add entries for bundle properties
   foreach ($extrapropertybundles as $bundlename => $bundleproperties) {
     foreach ($bundleproperties as $name => $info) {
       $info = $info ?? array();
-      $info += $extras[$entityType][$entityType][$name];
-      $info['form'] += $extras[$entityType][$entityType][$name]['form'];
-      $info['display'] += $extras[$entityType][$entityType][$name]['display'];
-      $extras[$entityType][$bundlename][$name] = $info;
+      $info += $extras[$entityType][$name];
+      $info['form'] += $extras[$entityType][$name]['form'];
+      $info['display'] += $extras[$entityType][$name]['display'];
+      $extras[$bundlename][$name] = $info;
     }
   }
   // add entries for declared bundle data items
@@ -88,10 +88,10 @@ function y__entity_extraFields($entityType, $bundle=NULL) {
       $info['type'] = 'data';
       $info['form'] += $defaults;
       $info['display'] += $defaults;
-      $extras[$entityType][$bundlename][$camelname] = $info;
+      $extras[$bundlename][$camelname] = $info;
     }
   }
-  return $bundle ? ($extras[$entityType][$bundle] ?? array()) : $extras[$entityType];
+  return $bundle ? ($extras[$bundle] ?? array()) : $extras;
 }
 
 /**
@@ -106,12 +106,12 @@ function y__entity_view($entity, $view_mode, $langcode) {
   $entityProperties = entity_get_property_info($entityType);
   $extrafields = y__entity_extraFields($entityType);
   $bundle = $entity->type;
-  $tokens = y__token_build_list(array_keys($extrafields[$entityType][$entity->type]));
+  $tokens = y__token_build_list(array_keys($extrafields[$entity->type]));
   $substitution = y__token_set_values($tokens, $entity);
 
-  foreach ($extrafields[$entityType][$entity->type] as $name => $info) {
+  foreach ($extrafields[$entity->type] as $name => $info) {
     $label = t($info['label'] ?? ucfirst($name));
-    $accesscallback = isset($extrafields[$entityType][$name]['access callback']) ? $extrafields[$entityType][$name]['access callback'] : NULL;
+    $accesscallback = isset($extrafields[$name]['access callback']) ? $extrafields[$name]['access callback'] : NULL;
     if ($accesscallback === NULL) {
       $accesscallback = isset($entityProperties['properties'][$name]['access callback']) ? $entityProperties['properties'][$name]['access callback'] : NULL;
       if ($accesscallback === NULL) {
@@ -128,10 +128,10 @@ function y__entity_view($entity, $view_mode, $langcode) {
       '#value' => $value,
       '#access' => $access,
     );
-    $render = ($extrafields[$entityType][$bundle][$name]['view mode'][$view_mode] ?? array());
-    $render += ($extrafields[$entityType][$bundle][$name]['display render'] ?? array());
-    $render += ($extrafields[$entityType][$entityType][$name]['view mode'][$view_mode] ?? array());
-    $render += ($extrafields[$entityType][$entityType][$name]['display render'] ?? array());
+    $render = ($extrafields[$bundle][$name]['view mode'][$view_mode] ?? array());
+    $render += ($extrafields[$bundle][$name]['display render'] ?? array());
+    $render += ($extrafields[$entityType][$name]['view mode'][$view_mode] ?? array());
+    $render += ($extrafields[$entityType][$name]['display render'] ?? array());
     $render += $default_render;
     $entity->content[] = $render;
   }

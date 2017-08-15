@@ -56,7 +56,7 @@ function y__token_set_values(array $tokens, $values) {
 function y__display_queryresults($resultset, $config) {
   $solo = (array) reset($resultset);
   $tokens = y__token_build_list(array_keys($solo));
-  $context = $config['protocol']['context'] ?? array();
+  $context = $config['#_protocol']['context'] ?? array();
   $config += array(
     'rowaccess' => array(),
     'colaccess' => array()
@@ -191,7 +191,7 @@ function y__query_build($config) {
 
   $config += array('arguments' => array(), 'build' => array());
   // Get data values
-  $substitution = $config['protocol']['context'] ?? array();
+  $substitution = $config['#_protocol']['context'] ?? array();
   foreach ($config['arguments'] as $name => $value) {
     $substitution[$name] = _y__token_data($value);
   }

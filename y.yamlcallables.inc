@@ -358,7 +358,7 @@ function y__yaml_callable_plugin_protocol($value, $tag, $flags) {
   $params = $value + $plugin;
   $yinfo = y__protocol($params['target'], $params['api'], $params['module']);
   $ret = $yinfo[$params['id']] ?? array();
-  // $ret['protocol'] = $value; // save original protocol request info with result
+  $ret['#_protocol'] = $value; // save original protocol request info with result
   return $ret;
 }
 
