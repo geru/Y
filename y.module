@@ -481,9 +481,20 @@ function y__protocol(string $protocol, string $api, $module = NULL, array &$info
           "*:properties:*:extra:" => '$1:$2:$3'
         )
       ),
+      'admin path' => array(
+        'pattern' => array( '*:menu:*:admin path' => '$1:$2' ),
+      )
     ),
-    'admin' => array(),
-    'layout' => array(),
+    'admin' => array(
+      'admin path' => array(
+        'pattern' => array( '*:menu:*:admin path' => '$1:$2' ),
+      )
+    ),
+    'layout' => array(
+      'admin path' => array(
+        'pattern' => array( '*:menu:*:admin path' => '$1:$2' ),
+      )
+    ),
     'theme' => array(),
   );
   if (!isset($info)) {
@@ -624,7 +635,16 @@ function y__system_settings_form($form, &$form_state, $protocol, $api, $module, 
  * Implements hook_menu().
  */
 function y_menu() {
-  return y__protocol_get_all('admin', 'menu', NULL, 1);
+  $ret = y__protocol_get_all('admin', 'menu', NULL, 1);
+  return $ret;
+}
+
+/**
+ * Implements hook_admin_paths().
+ */
+function y_admin_paths() {
+  $ret = y__protocol_get_all('admin', 'admin path', NULL, 1);
+  return $ret;
 }
 
 /**
